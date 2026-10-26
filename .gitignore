@@ -1,0 +1,10 @@
+# Build output
+build/
+build-*/
+cmake-build-*/
+
+# Editors and OS files
+.vscode/
+.idea/
+.DS_Store
+*.swp
