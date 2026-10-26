@@ -1,17 +1,19 @@
 /*--------------------------------------------------------------------------------------------------
  * File: canonical.hpp
  *
- * Description: The canonical order of expressions, and the construction of sums, products and
- *              powers in canonical form. Included by expr.hpp; not meant to be included on its
- *              own.
+ * Description: The canonical order of expressions, and the construction of sums, products,
+ *              powers and elementary function calls in canonical form. Included by expr.hpp;
+ *              not meant to be included on its own.
  *------------------------------------------------------------------------------------------------*/
 #ifndef LODE_DETAIL_CANONICAL_HPP
 #define LODE_DETAIL_CANONICAL_HPP
 
 #include <algorithm>
+#include <cmath>
 #include <compare>
 #include <cstddef>
 #include <map>
+#include <stdexcept>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -28,11 +30,12 @@ namespace lode
             {
                 case Kind::Number: return 0;
                 case Kind::Symbol: return 1;
-                case Kind::Mul:    return 2;
-                case Kind::Add:    return 3;
-                case Kind::Pow:    return 4;
+                case Kind::Call:   return 2;
+                case Kind::Mul:    return 3;
+                case Kind::Add:    return 4;
+                case Kind::Pow:    return 5;
             }
-            return 4;
+            return 5;
         }
     }
 
@@ -44,8 +47,8 @@ namespace lode
     *
     * A power sorts by its base, then its exponent, and any other expression e counts as e^1
     * here, so x, x^2 and x^3 sort together, before y. Otherwise numbers come first (by value),
-    * then symbols (by name), then products, then sums. Products and sums compare their parts
-    * in order.
+    * then symbols (by name), then function calls (by function, then argument), then products,
+    * then sums. Products and sums compare their parts in order.
     *---------------------------------------------------------------------------------------------*/
     inline std::strong_ordering compare(Expr const& a, Expr const& b)
     {
@@ -112,6 +115,15 @@ namespace lode
                 return compare(x.constant, y.constant);
             }
 
+            case Kind::Call:
+            {
+                detail::CallData const& x = a.node().call();
+                detail::CallData const& y = b.node().call();
+                std::strong_ordering order = x.function <=> y.function;
+                if (std::is_neq(order)) return order;
+                return compare(x.argument, y.argument);
+            }
+
             case Kind::Pow:
                 break;
         }
@@ -137,6 +149,11 @@ namespace lode
         Expr make_add(std::vector<Expr> const& operands);
         Expr make_mul(std::vector<Expr> const& operands);
         Expr make_pow(Expr const& base, Expr const& exponent);
+        Expr make_call(Elementary function, Expr const& argument);
+
+        // Whether an expression is an exponential, exp(u)
+        inline bool is_exp(Expr const& expr)
+        {return expr.is_call() && expr.node().call().function == Elementary::Exp;}
 
 
         // Adds coefficient*expr to the terms of a sum
@@ -312,18 +329,28 @@ namespace lode
 
 
        /*-------------------------------------------------------------------------------------------
-        * void multiply_factor(Expr const& expr, Number& coefficient, PowerMap& powers)
+        * void multiply_factor(Expr const& expr, Number& coefficient, PowerMap& powers,
+        *                      std::vector<Expr>& exponents)
         *
         * Multiplies an expression into a product under construction, flattening nested products
-        * and collecting powers of the same base.
+        * and collecting powers of the same base. Exponentials are set aside, to be combined into
+        * one: exp(a)*exp(b) = exp(a + b).
         *
         * Parameters:
         *     expr           Expression to multiply in (in canonical form)
         *     coefficient    The product's coefficient, updated
         *     powers         The product's factors, updated
+        *     exponents      Arguments of the product's exponentials, updated
         *-----------------------------------------------------------------------------------------*/
-        inline void multiply_factor(Expr const& expr, Number& coefficient, PowerMap& powers)
+        inline void multiply_factor(Expr const& expr, Number& coefficient, PowerMap& powers,
+                                    std::vector<Expr>& exponents)
         {
+            if (is_exp(expr))
+            {
+                exponents.push_back(expr.node().call().argument);
+                return;
+            }
+
             switch (expr.kind())
             {
                 case Kind::Number:
@@ -335,7 +362,12 @@ namespace lode
                     MulData const& product = expr.node().mul();
                     coefficient *= product.coefficient;
                     for (Factor const& factor : product.factors)
-                        accumulate_power(powers, factor.base, factor.exponent);
+                    {
+                        if (is_exp(factor.base))
+                            exponents.push_back(factor.base.node().call().argument);
+                        else
+                            accumulate_power(powers, factor.base, factor.exponent);
+                    }
                     return;
                 }
 
@@ -395,7 +427,7 @@ namespace lode
                     factors.push_back(Factor{base, power.node().pow().exponent});
                     factor_powers.push_back(power);
                 }
-                else if (power == base && (base.is_symbol() || base.is_add()))
+                else if (power == base && (base.is_symbol() || base.is_add() || base.is_call()))
                 {
                     factors.push_back(Factor{base, one()});
                     factor_powers.push_back(power);
@@ -433,12 +465,23 @@ namespace lode
         * Expr make_mul(std::vector<Expr> const& operands)
         *
         * The canonical product of expressions in canonical form.
+        *
+        * All exponentials combine into one, whose argument is the sum of theirs. That combined
+        * exponential can itself simplify, as exp(log(x) + y)*exp(-y) = exp(log(x)) = x, in which
+        * case it is multiplied in as an ordinary expression.
         *-----------------------------------------------------------------------------------------*/
         inline Expr make_mul(std::vector<Expr> const& operands)
         {
-            Number   coefficient = 1;
-            PowerMap powers;
-            for (Expr const& operand : operands) multiply_factor(operand, coefficient, powers);
+            Number            coefficient = 1;
+            PowerMap          powers;
+            std::vector<Expr> exponents;
+            for (Expr const& operand : operands)
+                multiply_factor(operand, coefficient, powers, exponents);
+            if (exponents.empty()) return build_mul(coefficient, powers);
+
+            Expr exponential = make_call(Elementary::Exp, make_add(exponents));
+            if (!is_exp(exponential)) return make_mul({build_mul(coefficient, powers), exponential});
+            accumulate_power(powers, exponential, one());
             return build_mul(coefficient, powers);
         }
 
@@ -453,12 +496,15 @@ namespace lode
         * product is raised factor by factor, and a sum's content is taken out
         * ((2*x + 2)^2 = 4*(x + 1)^2). These rules do not hold for every real base when n is not
         * an integer ((x^2)^(1/2) is |x|, not x), so such powers are left as they are. With any
-        * exponent, 1^x = 1.
+        * exponent, 1^x = 1 and exp(u)^x = exp(u*x).
         *
         * Throws std::domain_error for zero raised to a negative number.
         *-----------------------------------------------------------------------------------------*/
         inline Expr make_pow(Expr const& base, Expr const& exponent)
         {
+            if (is_exp(base))
+                return make_call(Elementary::Exp, make_mul({base.node().call().argument, exponent}));
+
             if (exponent.is_number())
             {
                 Number const& n = exponent.number();
@@ -505,6 +551,144 @@ namespace lode
                 return one();
 
             return make_expr(PowData{base, exponent});
+        }
+
+
+       /*-------------------------------------------------------------------------------------------
+        * bool has_leading_minus(Expr const& expr)
+        *
+        * Whether an expression reads with a leading minus sign: a negative number, a product with
+        * a negative coefficient, or a sum whose first term is negative. Exactly one of u and -u
+        * has a leading minus (unless u is 0), which lets odd and even functions choose a
+        * canonical sign: sin(-x) = -sin(x).
+        *-----------------------------------------------------------------------------------------*/
+        inline bool has_leading_minus(Expr const& expr)
+        {
+            switch (expr.kind())
+            {
+                case Kind::Number:
+                    return expr.number().is_negative();
+                case Kind::Mul:
+                    return expr.node().mul().coefficient.is_negative();
+                case Kind::Add:
+                    return expr.node().add().terms.front().coefficient.is_negative();
+                default:
+                    return false;
+            }
+        }
+
+
+       /*-------------------------------------------------------------------------------------------
+        * std::optional<Expr> separate_logarithms(Expr const& argument)
+        *
+        * Rewrites exp(argument) with its logarithm terms taken out: exp(c*log(u) + rest) =
+        * u^c*exp(rest), for each term c*log(u) of the argument.
+        *
+        * Returns:
+        *     The rewritten exponential, or nothing if the argument has no logarithm terms
+        *-----------------------------------------------------------------------------------------*/
+        inline std::optional<Expr> separate_logarithms(Expr const& argument)
+        {
+            // The argument as constant + sum of coefficient*term
+            Number            constant = 0;
+            std::vector<Term> terms;
+            if (argument.is_add())
+            {
+                constant = argument.node().add().constant;
+                terms    = argument.node().add().terms;
+            }
+            else if (argument.is_mul() && argument.node().mul().factors.size() == 1)
+            {
+                MulData const& product = argument.node().mul();
+                Expr single = make_pow(product.factors[0].base, product.factors[0].exponent);
+                terms.push_back(Term{single, product.coefficient});
+            }
+            else
+                terms.push_back(Term{argument, Number(1)});
+
+            std::vector<Expr> factors;
+            std::vector<Expr> rest{Expr(constant)};
+            for (Term const& term : terms)
+            {
+                bool logarithm = term.expr.is_call()
+                              && term.expr.node().call().function == Elementary::Log;
+                if (logarithm)
+                {
+                    Expr const& inside = term.expr.node().call().argument;
+                    factors.push_back(make_pow(inside, Expr(term.coefficient)));
+                }
+                else
+                    rest.push_back(make_mul({Expr(term.coefficient), term.expr}));
+            }
+            if (factors.empty()) return std::nullopt;
+
+            factors.push_back(make_call(Elementary::Exp, make_add(rest)));
+            return make_mul(factors);
+        }
+
+
+       /*-------------------------------------------------------------------------------------------
+        * Expr make_call(Elementary function, Expr const& argument)
+        *
+        * The canonical call of an elementary function. Simplifications that hold for every real
+        * argument are applied:
+        *
+        *     exp(0) = 1, log(1) = 0, sin(0) = 0, cos(0) = 1
+        *     exp(c*log(u) + rest) = u^c*exp(rest), so exp(log(u)) = u
+        *     log(exp(u)) = u
+        *     sin(-u) = -sin(u), cos(-u) = cos(u)
+        *
+        * Taking logarithms out of an exponential keeps products canonical: otherwise
+        * exp(log(x))*exp(y) = x*exp(y) would differ from exp(log(x) + y).
+        *
+        * A real (floating-point) argument is evaluated, giving a real. Any other exact argument
+        * is kept symbolic, so exp(1) stays the exact number e.
+        *
+        * Throws std::domain_error for log(0).
+        *-----------------------------------------------------------------------------------------*/
+        inline Expr make_call(Elementary function, Expr const& argument)
+        {
+            bool   is_number = argument.is_number();
+            Number value     = is_number ? argument.number() : Number(0);
+            bool   is_real   = is_number && value.is_real();
+
+            switch (function)
+            {
+                case Elementary::Exp:
+                {
+                    if (is_number && value.is_zero()) return one();
+                    if (is_real) return Expr(std::exp(value.to_double()));
+                    std::optional<Expr> separated = separate_logarithms(argument);
+                    if (separated) return *separated;
+                    break;
+                }
+
+                case Elementary::Log:
+                    if (is_number && value.is_zero())
+                        throw std::domain_error("log: the logarithm of 0 is undefined");
+                    if (is_number && value.is_one()) return zero();
+                    if (is_real && !value.is_negative()) return Expr(std::log(value.to_double()));
+                    if (is_exp(argument)) return argument.node().call().argument;
+                    break;
+
+                case Elementary::Sin:
+                    if (is_number && value.is_zero()) return zero();
+                    if (is_real) return Expr(std::sin(value.to_double()));
+                    if (has_leading_minus(argument))
+                    {
+                        Expr positive = make_mul({Expr(-1), argument});
+                        return make_mul({Expr(-1), make_call(function, positive)});
+                    }
+                    break;
+
+                case Elementary::Cos:
+                    if (is_number && value.is_zero()) return one();
+                    if (is_real) return Expr(std::cos(value.to_double()));
+                    if (has_leading_minus(argument))
+                        return make_call(function, make_mul({Expr(-1), argument}));
+                    break;
+            }
+            return make_expr(CallData{function, argument});
         }
     }
 }

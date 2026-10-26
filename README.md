@@ -6,7 +6,8 @@ LODE is a header-only C++20 library for building mathematical functions as symbo
 expressions, differentiating them exactly, and evaluating them fast. It grew out of the
 `nablaxx` prototype.
 
-What works today (phase 1): expressions are built in canonical form as you write them.
+What works today: expressions are built in canonical form as you write them, and can be
+differentiated, substituted into, and evaluated.
 
 ```cpp
 #include "lode/lode.hpp"
@@ -14,21 +15,32 @@ What works today (phase 1): expressions are built in canonical form as you write
 lode::Symbol x("x"), y("y"), z("z");
 lode::Expr f = x*x*2 + 1 + y + x + x*y*z;   // x + 2*x^2 + y + x*y*z + 1
 
-x + y + x;                // 2*x + y
-y*x - x*y;                // 0
-x*y + x;                  // x + x*y
-(2*x + 2)/(x + 1);        // 2
-pow(sqrt(x), 2);          // x
-x/2 + x/3;                // 5*x/6 (exact rationals)
+// Canonical form simplifies as you build
+x + y + x;                  // 2*x + y
+y*x - x*y;                  // 0
+(2*x + 2)/(x + 1);          // 2
+exp(x)*exp(y);              // exp(x + y)
+x/2 + x/3;                  // 5*x/6 (exact rationals)
+
+// Derivatives
+diff(f, x);                 // 4*x + y*z + 1
+diff(sin(x*x), x);          // 2*x*cos(x^2)
+
+// Substitution, the basis of partial evaluation
+substitute(f, {{y, 2}});    // x + 2*x^2 + 2*x*z + 3
+
+// Reference evaluation (simple and checked; a fast compiled evaluator is next)
+lode::evaluate(f, {{x, 1.0}, {y, 2.0}, {z, 3.0}});   // 12.0
 ```
 
-The goal, still to come: write the math, get exact derivatives, evaluate quickly.
+The goal, still to come: a `Function` that binds variables to inputs and evaluates fast.
 
 ```cpp
 lode::Function f(x, y, z);
 f = x*x*2 + 1 + y + x + x*y*z;
 auto grad_f = f.grad();           // [4*x + y*z + 1, x*z + 1, x*y]
-double value = f(1.0, 2.0, 3.0);
+double value = f(1.0, 2.0, 3.0);  // 12
+lode::Function g = f(x, 2, z);    // partial evaluation: g(x, z)
 ```
 
 ## Intended uses
@@ -55,8 +67,10 @@ double value = f(1.0, 2.0, 3.0);
 ## Roadmap
 
 1. Expression core: symbols, numbers, sums, products and powers in canonical form. *(Done.)*
-2. Differentiation, substitution, and `exp`, `log`, `pow`, `sqrt`, `sin`, `cos`.
-3. `Function` with evaluation, gradient, Jacobian and Hessian.
+2. Differentiation, substitution, `exp`, `log`, `sin`, `cos`, and a reference evaluator.
+   *(Done.)*
+3. `Function` with fast compiled evaluation (including batches of points), gradient,
+   Jacobian, Hessian, and partial evaluation.
 4. Examples as tests: finite-element shape functions and a stiff chemistry Jacobian.
 5. Later: expand, collect, and C++ code generation.
 

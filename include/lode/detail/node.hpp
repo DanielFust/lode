@@ -55,9 +55,10 @@ namespace lode::detail
     // coefficient * product of factors. Factors are sorted by base in canonical order, with
     // distinct bases and nonzero exponents. A base that is a number, product or power appears
     // only with a non-integer exponent, as in 2^(1/2). A sum with an integer exponent is
-    // primitive (see split_content). The coefficient is nonzero, and there are at least two
-    // factors, or one factor and a coefficient other than 1. A lone factor s^1 with s a sum does
-    // not occur: the coefficient is distributed over the sum instead.
+    // primitive (see split_content). At most one factor is an exponential, exp(u)^1. The
+    // coefficient is nonzero, and there are at least two factors, or one factor and a
+    // coefficient other than 1. A lone factor s^1 with s a sum does not occur: the coefficient
+    // is distributed over the sum instead.
     struct MulData
     {
         Number              coefficient;
@@ -71,6 +72,13 @@ namespace lode::detail
         Expr exponent;
     };
 
+    // An elementary function applied to an argument, when it does not simplify further
+    struct CallData
+    {
+        Elementary function;
+        Expr       argument;
+    };
+
 
    /*-----------------------------------------------------------------------------------------------
     * class Node
@@ -80,7 +88,7 @@ namespace lode::detail
     class Node
     {
       public:
-        using Data = std::variant<Number, SymbolData, AddData, MulData, PowData>;
+        using Data = std::variant<Number, SymbolData, AddData, MulData, PowData, CallData>;
 
       private:
         Data        data_;
@@ -101,6 +109,7 @@ namespace lode::detail
         AddData const& add() const {return std::get<AddData>(this->data_);}
         MulData const& mul() const {return std::get<MulData>(this->data_);}
         PowData const& pow() const {return std::get<PowData>(this->data_);}
+        CallData const& call() const {return std::get<CallData>(this->data_);}
 
       private:
         std::size_t compute_hash() const;
@@ -117,6 +126,8 @@ namespace lode::detail
                                                             Node::Data>, MulData>);
     static_assert(std::is_same_v<std::variant_alternative_t<static_cast<std::size_t>(Kind::Pow),
                                                             Node::Data>, PowData>);
+    static_assert(std::is_same_v<std::variant_alternative_t<static_cast<std::size_t>(Kind::Call),
+                                                            Node::Data>, CallData>);
 
 
    /*-----------------------------------------------------------------------------------------------
@@ -154,6 +165,10 @@ namespace lode::detail
             case Kind::Pow:
                 hash_combine(seed, this->pow().base.hash());
                 hash_combine(seed, this->pow().exponent.hash());
+                break;
+            case Kind::Call:
+                hash_combine(seed, static_cast<std::size_t>(this->call().function));
+                hash_combine(seed, this->call().argument.hash());
                 break;
         }
         return seed;

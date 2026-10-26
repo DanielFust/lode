@@ -15,6 +15,7 @@
 #include <ostream>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "lode/number.hpp"
 
@@ -26,7 +27,10 @@ namespace lode
     }
 
     // Kinds of expression node. The order matches the alternatives of detail::Node::Data.
-    enum class Kind {Number, Symbol, Add, Mul, Pow};
+    enum class Kind {Number, Symbol, Add, Mul, Pow, Call};
+
+    // Elementary functions that can be applied to an expression
+    enum class Elementary {Exp, Log, Sin, Cos};
 
 
    /*-----------------------------------------------------------------------------------------------
@@ -78,6 +82,7 @@ namespace lode
         bool is_add() const {return this->kind() == Kind::Add;}
         bool is_mul() const {return this->kind() == Kind::Mul;}
         bool is_pow() const {return this->kind() == Kind::Pow;}
+        bool is_call() const {return this->kind() == Kind::Call;}
 
         // Value of a number; throws std::logic_error for any other expression
         Number const& number() const;
@@ -129,6 +134,14 @@ namespace lode
 
         // Identifier that distinguishes this variable from others of the same name
         std::uint64_t id() const;
+
+        // The variable an expression consists of; throws std::invalid_argument if the
+        // expression is not a single symbol
+        static Symbol from(Expr const& expr);
+
+      private:
+        // Wraps an expression known to be a symbol
+        explicit Symbol(Expr expr) : Expr(std::move(expr)) {}
     };
 
 
@@ -141,6 +154,50 @@ namespace lode
     // The square root, as the power 1/2
     Expr sqrt(Expr const& value);
 
+    /*----------------------------------- Elementary functions -----------------------------------*/
+
+    // The exponential e^value
+    Expr exp(Expr const& value);
+
+    // The natural logarithm; throws std::domain_error for log(0)
+    Expr log(Expr const& value);
+
+    // Sine and cosine, of an angle in radians
+    Expr sin(Expr const& value);
+    Expr cos(Expr const& value);
+
+    /*-------------------------------- Calculus and substitution ---------------------------------*/
+
+    // The derivative of an expression with respect to a variable, of the given order (at least
+    // 0); throws std::invalid_argument for a negative order
+    Expr diff(Expr const& expr, Symbol const& variable, int order = 1);
+
+    // Replacements for variables: each Symbol paired with the expression that replaces it
+    using Substitution = std::vector<std::pair<Symbol, Expr>>;
+
+    // An expression with variables replaced, all at once, so {{x, y}, {y, x}} swaps x and y.
+    // The result is rebuilt in canonical form, so replacing variables by numbers folds them:
+    // x*y + y^2 with y = 2 gives 2*x + 4. Throws std::invalid_argument if a variable is listed
+    // twice.
+    Expr substitute(Expr const& expr, Substitution const& replacements);
+
+    // The variables in an expression, in canonical order (by name)
+    std::vector<Symbol> symbols(Expr const& expr);
+
+    /*---------------------------------------- Evaluation ----------------------------------------*/
+
+    // Values for variables: each Symbol paired with its value
+    template<class T>
+    using Values = std::vector<std::pair<Symbol, T>>;
+
+    // Numeric value of an expression for given values of its variables, computed in type T
+    // (double unless given; std::complex<double> also works). A reference implementation that
+    // walks the expression, meant for checking results rather than for speed.
+    template<class T = double>
+    T evaluate(Expr const& expr, Values<T> const& values);
+
+    /*------------------------------------------ Output ------------------------------------------*/
+
     // Writes the expression's text form
     std::ostream& operator<<(std::ostream& out, Expr const& expr);
 }
@@ -150,5 +207,7 @@ namespace lode
 #include "lode/detail/canonical.hpp"
 #include "lode/detail/print.hpp"
 #include "lode/detail/expr_impl.hpp"
+#include "lode/detail/calculus.hpp"
+#include "lode/detail/evaluate.hpp"
 
 #endif

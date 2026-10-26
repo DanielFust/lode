@@ -50,6 +50,13 @@ namespace lode
 
     inline std::uint64_t Symbol::id() const {return this->node().symbol().id;}
 
+    inline Symbol Symbol::from(Expr const& expr)
+    {
+        if (!expr.is_symbol())
+            throw std::invalid_argument("Symbol::from: '" + expr.to_string() + "' is not a symbol");
+        return Symbol(expr);
+    }
+
     /*---------------------------------------- Operators -----------------------------------------*/
 
     inline Expr operator+(Expr const& a, Expr const& b) {return detail::make_add({a, b});}
@@ -68,6 +75,14 @@ namespace lode
     inline Expr pow(Expr const& base, Expr const& exponent) {return detail::make_pow(base, exponent);}
 
     inline Expr sqrt(Expr const& value) {return detail::make_pow(value, Expr(Number(1, 2)));}
+
+    inline Expr exp(Expr const& value) {return detail::make_call(Elementary::Exp, value);}
+
+    inline Expr log(Expr const& value) {return detail::make_call(Elementary::Log, value);}
+
+    inline Expr sin(Expr const& value) {return detail::make_call(Elementary::Sin, value);}
+
+    inline Expr cos(Expr const& value) {return detail::make_call(Elementary::Cos, value);}
 
 
    /*-----------------------------------------------------------------------------------------------

@@ -37,6 +37,7 @@ namespace lode::detail
                 return n.is_negative() || fraction ? Precedence::Product : Precedence::Atom;
             }
             case Kind::Symbol:
+            case Kind::Call:
                 return Precedence::Atom;
             case Kind::Add:
                 return Precedence::Sum;
@@ -58,6 +59,19 @@ namespace lode::detail
     {
         std::string text = print(expr);
         return precedence(expr) < context ? "(" + text + ")" : text;
+    }
+
+    // Name of an elementary function, as printed
+    inline char const* function_name(Elementary function)
+    {
+        switch (function)
+        {
+            case Elementary::Exp: return "exp";
+            case Elementary::Log: return "log";
+            case Elementary::Sin: return "sin";
+            case Elementary::Cos: return "cos";
+        }
+        return "?";
     }
 
     // Joins strings with a separator
@@ -162,6 +176,12 @@ namespace lode::detail
 
             case Kind::Pow:
                 return print_product(Number(1), factors_of(expr));
+
+            case Kind::Call:
+            {
+                CallData const& call = expr.node().call();
+                return std::string(function_name(call.function)) + "(" + print(call.argument) + ")";
+            }
 
             case Kind::Add:
             {

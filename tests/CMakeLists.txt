@@ -5,6 +5,10 @@ set(LODE_TESTS
     canonical_test
     print_test
     property_test
+    functions_test
+    differentiate_test
+    substitute_test
+    evaluate_test
 )
 
 foreach (test_name IN LISTS LODE_TESTS)
