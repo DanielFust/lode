@@ -1,6 +1,10 @@
 # Each test is its own executable, registered with CTest under the file's base name.
 set(LODE_TESTS
     version_test
+    number_test
+    canonical_test
+    print_test
+    property_test
 )
 
 foreach (test_name IN LISTS LODE_TESTS)

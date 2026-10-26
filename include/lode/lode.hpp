@@ -8,5 +8,7 @@
 #define LODE_LODE_HPP
 
 #include "lode/version.hpp"
+#include "lode/number.hpp"
+#include "lode/expr.hpp"
 
 #endif
