@@ -29,18 +29,31 @@ diff(sin(x*x), x);          // 2*x*cos(x^2)
 // Substitution, the basis of partial evaluation
 substitute(f, {{y, 2}});    // x + 2*x^2 + 2*x*z + 3
 
-// Reference evaluation (simple and checked; a fast compiled evaluator is next)
+// Reference evaluation (simple and checked; Function below is the fast path)
 lode::evaluate(f, {{x, 1.0}, {y, 2.0}, {z, 3.0}});   // 12.0
 ```
 
-The goal, still to come: a `Function` that binds variables to inputs and evaluates fast.
+Functions bind variables to inputs and compile for fast evaluation:
 
 ```cpp
 lode::Function f(x, y, z);
 f = x*x*2 + 1 + y + x + x*y*z;
-auto grad_f = f.grad();           // [4*x + y*z + 1, x*z + 1, x*y]
-double value = f(1.0, 2.0, 3.0);  // 12
-lode::Function g = f(x, 2, z);    // partial evaluation: g(x, z)
+double value = f(1.0, 2.0, 3.0);    // 12
+lode::Function grad_f = f.grad();   // [4*x + y*z + 1, x*z + 1, x*y]
+lode::Function hess_f = f.hessian(); // [[4, z, y], [z, 0, x], [y, x, 0]]
+lode::Function g = f(x, 2, z);      // partial evaluation: g(x, z) = x + 2*x^2 + 2*x*z + 3
+
+std::vector<double> gradient = grad_f.evaluate(std::vector<double>{1.0, 2.0, 3.0});
+grad_f.evaluate_batch(points, results);   // many points at once, fastest
+```
+
+Vector functions work the same way; the gradient of a vector function is its Jacobian:
+
+```cpp
+lode::Function rhs({y1, y2, y3}, {-k1*y1 + k3*y2*y3,
+                                  k1*y1 - k3*y2*y3 - k2*pow(y2, 2),
+                                  k2*pow(y2, 2)});
+lode::Function jacobian = rhs.grad();     // 3x3, compiled together
 ```
 
 ## Intended uses
@@ -62,7 +75,9 @@ lode::Function g = f(x, 2, z);    // partial evaluation: g(x, z)
 - **Explicit transforms.** Expansion, collection and factoring are separate operations that
   you ask for.
 - **Compiled evaluation.** A function, gradient or Jacobian is compiled into a flat list of
-  operations, with common subexpressions computed once.
+  operations, with common subexpressions computed once and registers reused. Batch evaluation
+  runs each operation over a block of points. See `bench/benchmark.cpp` and the timings in
+  [docs/devlog.md](docs/devlog.md).
 
 ## Roadmap
 
@@ -70,7 +85,7 @@ lode::Function g = f(x, 2, z);    // partial evaluation: g(x, z)
 2. Differentiation, substitution, `exp`, `log`, `sin`, `cos`, and a reference evaluator.
    *(Done.)*
 3. `Function` with fast compiled evaluation (including batches of points), gradient,
-   Jacobian, Hessian, and partial evaluation.
+   Jacobian, Hessian, and partial evaluation. *(Done.)*
 4. Examples as tests: finite-element shape functions and a stiff chemistry Jacobian.
 5. Later: expand, collect, and C++ code generation.
 
@@ -84,7 +99,11 @@ cmake -S . -B build && cmake --build build && ctest --test-dir build
 ```
 
 To use LODE from another CMake project, add it with `add_subdirectory` and link
-`lode::lode`.
+`lode::lode`. To build the benchmark, configure a Release build with
+`-DLODE_BUILD_BENCHMARKS=ON` and run `lode_benchmark`.
+
+Design decisions, progress and known limitations are recorded in
+[docs/devlog.md](docs/devlog.md).
 
 ## License
 

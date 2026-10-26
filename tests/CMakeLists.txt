@@ -9,6 +9,7 @@ set(LODE_TESTS
     differentiate_test
     substitute_test
     evaluate_test
+    function_test
 )
 
 foreach (test_name IN LISTS LODE_TESTS)

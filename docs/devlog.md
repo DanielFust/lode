@@ -11,7 +11,7 @@ entry per stretch of work. Commits are named by their short hash.
 | 0 | Scaffold: CMake, header-only target, test harness, license | Done | `e4ae3d2` |
 | 1 | Expression core: numbers, symbols, sums, products, powers in canonical form | Done | `a55ce30` |
 | 2 | Differentiation, substitution, `exp` `log` `sin` `cos`, reference evaluator | Done | `0838c4e` |
-| 3 | `Function`: compiled fast evaluation, batches, gradient/Jacobian/Hessian, partial evaluation | In progress | |
+| 3 | `Function`: compiled fast evaluation, batches, gradient/Jacobian/Hessian, partial evaluation | Done | *Add Function and the compiled evaluator* (filled in next entry) |
 | 4 | Worked examples as tests: finite-element shape functions, stiff chemistry Jacobian | Planned | |
 | 5 | `expand`, `collect`, C++ code generation | Planned | |
 
@@ -106,6 +106,57 @@ powers, exponentials), and that derivatives match complex-step values. Each rand
 also run over 20 extra seeds before a phase is committed. Every phase builds warning-free on
 Clang and GCC and runs clean under the address and undefined-behaviour sanitizers.
 
+**D16. `Function` holds an array of outputs, compiled together.** A function has an ordered
+domain and outputs of any shape (scalar, vector, matrix, …), stored row-major. All outputs share
+one compiled program, so work common to several outputs, such as Jacobian entries, is done once.
+`grad()` appends a dimension of the domain's size: a scalar's gradient is a vector, a vector's
+gradient is its Jacobian, and `hessian()` is `grad().grad()`. `f[i]` slices the first
+dimension (a Jacobian's row). Results go into buffers you provide (`std::span`), with
+convenience overloads returning `std::vector`, so LODE does not impose a tensor type.
+
+**D17. Evaluation runs a compiled program in a simple interpreter.** Compilation lowers the
+outputs to a flat list of instructions, then assigns registers. While lowering, it:
+
+- computes equal subexpressions once, even when they are different nodes (keyed by structure);
+- emits identical instructions once (value numbering), with `a + b` and `b + a` recognized;
+- builds integer powers by repeated squaring from shared smaller powers (`x^2` serves `x^3`);
+- folds operations on constants, and gives instructions constant operands (`x*2.5 + y` is one
+  `MulAddConst`) so constants never occupy registers;
+- multiplies a product's negative powers together and divides once;
+- applies a product's coefficient last, so `3*x*y` and `5*x*y` share `x*y`.
+
+Registers are reused as soon as a value has been read for the last time, which keeps the
+register file small (44 registers for the 1021-instruction Jacobian benchmark). The interpreter
+is a `switch` in a loop over contiguous instructions: no recursion, no virtual calls.
+
+**D18. Batch evaluation processes blocks of 32 points.** Each register holds a value for every
+point in the block, and each instruction loops over the block. The cost of dispatching an
+instruction is spread across 32 points, and the inner loops are simple enough to vectorize.
+In the benchmarks, batches are 2.5–4.6× faster per point than one point at a time.
+
+**D19. Functions compile when built and are immutable afterwards.** Building may be slow
+(R1). Copies share the compiled program, so copying is cheap. Each thread evaluates with its
+own scratch registers (`thread_local`), so one function can be evaluated from several threads
+at once without locking.
+
+**D20. Partial evaluation by argument.** For `f(x, y, z)`, `f(a, b, c)` with any symbolic
+argument substitutes the arguments for the variables and compiles the result. The new domain
+is the variables of the arguments, in order of first appearance: `f(x, 2, z)` is a function of
+`(x, z)`, `f(z, y, x)` swaps two variables, `f(2*t, y, 1 - t)` reparametrizes to `(t, y)`. An
+integer argument stays exact; a floating-point one (`2.5`) becomes a real constant.
+`f.partial({{y, 2}})` does the same by naming variables. Constants fold during
+substitution, so the partially evaluated function has fewer instructions than the original.
+
+**D21. `f(x, y) = expr` is not supported.** In nablaxx, `f(x, y, z) = ...` set the domain. In
+LODE, `f(x, y, z)` is partial evaluation and returns a new function, so assigning to it would
+silently change a temporary. `Function::operator=` only works on a named function, which makes
+that line a compile error. Write `Function f(x, y, z); f = ...;` or `Function f({x, y, z}, expr)`.
+
+**D22. A variable outside the domain is an error.** Building a function whose outputs use a
+variable not in its domain throws, naming the variable and the domain. Values for such
+variables (rate constants, say) must be substituted first, or the variables added to the
+domain. This is open to revision; see Open questions.
+
 ## Log
 
 ### 2026-10-26 — Review of nablaxx
@@ -164,22 +215,60 @@ Clang and GCC and runs clean under the address and undefined-behaviour sanitizer
 - Tests: functions, derivatives (including about 2,900 random complex-step comparisons per seed,
   agreeing to 1e-9), substitution, evaluation; the property test now includes functions.
 
-### 2026-10-26 — Phase 3 plan: `Function` and the compiled evaluator
+### 2026-10-26 — Development log started (`66b9ceb`)
 
-Plan, to be updated as the work proceeds:
+- You asked for this log. It lives in the repository so that each phase's entry is committed
+  with its code.
 
-- `Function` binds an ordered domain of symbols to one or more output expressions with a shape
-  (scalar, vector, matrix), like nablaxx's `Tensor<Function>` but compiled together.
-- Compilation turns all outputs into one flat list of instructions with common subexpressions
-  computed once, integer powers built from shared smaller powers (`x^2` reused for `x^3`),
-  constants folded, and registers reused once a value is no longer needed.
-- Evaluation runs that list in a loop: no recursion, no virtual calls, contiguous memory. A batch
-  mode evaluates many points per instruction.
-- `grad()` adds a dimension to the shape (scalar → gradient vector, vector → Jacobian matrix);
-  `hessian()` is the gradient of the gradient.
-- Partial evaluation: `f(x, 2, z)` substitutes and recompiles, giving `g(x, z)`.
+### 2026-10-26 — Phase 3: `Function` and the compiled evaluator
+
+- `Function` (D16, D19–D22) with `evaluate`, `evaluate_batch`, `operator()` for scalars, `grad`,
+  `hessian`, `diff`, slicing with `[]`, partial evaluation, and `listing()` to show the program.
+- The compiler and interpreter (D17, D18) are in `include/lode/detail/compiler.hpp` and
+  `program.hpp`. As an example, partially evaluating your demo function, `f(x, 2, z)`, gives
+  `x + 2*x^2 + 2*x*z + 3`, which compiles to:
+
+  ```
+  r2 = r0*r0          x^2 (r0 holds x, r1 holds z)
+  r2 = r2*2.0 + r0    2*x^2 + x
+  r1 = r0*r1          x*z, reusing z's register
+  r2 = r1*2.0 + r2    + 2*x*z
+  r2 = r2 + 3.0       + 3
+  out[0] = r2
+  ```
+
+- Tests (`tests/function_test.cpp`): your demo, its gradient and Hessian; the Robertson stiff
+  kinetics right-hand side and its Jacobian against a hand-derived one; batch against pointwise
+  evaluation; partial evaluation, renaming and reparametrization; instruction counts proving
+  shared work (`(x + y)^2 + (x + y)^3` is 5 instructions); errors and their messages. On random
+  expressions, the compiled evaluator agrees with the reference evaluator to 1e-12, and
+  compiled gradients agree with complex-step derivatives taken *through the compiled program*,
+  which also exercises it with complex numbers. 20 extra seeds pass.
+- A benchmark (`bench/benchmark.cpp`, built with `-DLODE_BUILD_BENCHMARKS=ON`). Nanoseconds per
+  point, Release build, Apple Clang 21:
+
+  | Function | Instructions | Registers | Reference | Compiled | Batch | By hand |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+  | Robertson right-hand side | 11 | 4 | 4,500 | 27 | 10.5 | 9.2 |
+  | Robertson Jacobian (3×3) | 15 | 3 | 8,000 | 33 | 10.8 | 6.4 |
+  | Network right-hand side (30 species) | 134 | 37 | 193,000 | 249 | 100 | |
+  | Network Jacobian (30×30) | 1,021 | 44 | 4,534,000 | 3,040 | 659 | |
+  | Triangle P2 shape functions (6) | 23 | 5 | 6,600 | 47 | 14.3 | 4.5 |
+  | Triangle P2 gradients (6×2) | 25 | 6 | 8,900 | 51 | 15.3 | 5.6 |
+
+  Reading the table: compiled evaluation is 140–1,500× faster than the reference evaluator,
+  and batches are another 2.5–4.6× faster per point. Hand-written C++ remains 1.1–3.2× faster
+  than batches on these small functions, because the interpreter still dispatches each
+  instruction. Generating C++ from a `Function` (phase 5) would remove that cost entirely for
+  functions known when your program is built. The network Jacobian is mostly zeros; 900 of its
+  1,021 instructions are stores, one per entry.
 
 ## Known limitations
+
+- The interpreter is 1.1–3.2× slower than hand-written C++ in batch mode, and 3–10× slower one
+  point at a time (see the phase 3 benchmark). C++ code generation is planned (phase 5).
+- Outputs are dense: a sparse Jacobian still stores every zero entry at each evaluation. Large
+  reaction networks would benefit from sparse output.
 
 - Products of sums are not expanded (D9), so `x*(y + z)` does not equal `x*y + x*z`.
 - Simplifications that are not valid for every real value are not automatic (D11): no
@@ -193,6 +282,10 @@ Plan, to be updated as the work proceeds:
 - Some lines run to 101–103 columns: over the 100-column aim, under the 120-column limit.
 
 ## Open questions for you
+
+- **Sparse Jacobians.** For large reaction networks, would a sparse Jacobian (the nonzero
+  pattern computed once, then only nonzero values evaluated) be worth adding? It fits the
+  compiled design well.
 
 - **Container for tensor results.** Plan: LODE writes results into a buffer you provide
   (`std::span<double>`), with convenience overloads returning `std::vector<double>`, so it can

@@ -16,3 +16,13 @@ if (LODE_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# Benchmarks build on request; time them in a Release build.
+option(LODE_BUILD_BENCHMARKS "Build the LODE benchmarks" OFF)
+if (LODE_BUILD_BENCHMARKS)
+    add_executable(lode_benchmark bench/benchmark.cpp)
+    target_link_libraries(lode_benchmark PRIVATE lode::lode)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(lode_benchmark PRIVATE -Wall -Wextra -Werror)
+    endif()
+endif()
