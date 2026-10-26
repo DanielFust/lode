@@ -11,9 +11,10 @@ entry per stretch of work. Commits are named by their short hash.
 | 0 | Scaffold: CMake, header-only target, test harness, license | Done | `e4ae3d2` |
 | 1 | Expression core: numbers, symbols, sums, products, powers in canonical form | Done | `a55ce30` |
 | 2 | Differentiation, substitution, `exp` `log` `sin` `cos`, reference evaluator | Done | `0838c4e` |
-| 3 | `Function`: compiled fast evaluation, batches, gradient/Jacobian/Hessian, partial evaluation | Done | *Add Function and the compiled evaluator* (filled in next entry) |
+| 3 | `Function`: compiled fast evaluation, batches, gradient/Jacobian/Hessian, partial evaluation | Done | `0e09903` |
 | 4 | Worked examples as tests: finite-element shape functions, stiff chemistry Jacobian | Planned | |
 | 5 | `expand`, `collect`, C++ code generation | Planned | |
+| — | Sparse Jacobians, written into MATL's `CSRMatrix` | Planned (you agreed) | |
 
 ## Requirements from you
 
@@ -263,6 +264,28 @@ domain. This is open to revision; see Open questions.
   functions known when your program is built. The network Jacobian is mostly zeros; 900 of its
   1,021 instructions are stores, one per entry.
 
+### 2026-10-26 — Discussion of the open questions
+
+- **Sparse Jacobians: yes, eventually**, possibly with MATL's sparse types. MATL's `CSRMatrix`
+  exposes its values as a `std::span` and its index arrays are 0-based, so a sparse Jacobian
+  could compile only the nonzero entries, in CSR order, and write them straight into
+  `S.values()`, with the pattern built once. Canonical forms make "identically zero" an exact
+  test, so the pattern is exact.
+- **Parameters: undecided.** Your model so far was substitution of a symbol. Both are
+  substitution; the difference is *when*. Partial evaluation substitutes when the function is
+  built, so constants fold and evaluation is fastest, but every change of value means a
+  rebuild. Parameters would defer the substitution to each evaluation: no rebuild, and
+  derivatives exclude them. Measured on the Robertson Jacobian with a temperature-dependent
+  rate: fixing `T` by partial evaluation takes 38 µs, while one evaluation takes 0.1 µs, so a
+  rebuild costs about 370 evaluations. That matters when a value changes every time step
+  (temperature in a non-isothermal reactor, element geometry in finite elements). Proposed
+  API sketched in the conversation; awaiting your decision.
+- **Result container: undecided.** Options weighed: standard types (`std::span` in,
+  `std::vector` out), a LODE tensor type, or MATL types. MATL stores dense matrices row-major
+  (as LODE orders outputs) with a `data()` pointer, and already uses `std::span` for its CSR
+  arrays, so a span-based core can write into MATL storage without copying. Proposed: keep the
+  span-based core and add an optional MATL adapter header; awaiting your decision.
+
 ## Known limitations
 
 - The interpreter is 1.1–3.2× slower than hand-written C++ in batch mode, and 3–10× slower one
@@ -283,15 +306,11 @@ domain. This is open to revision; see Open questions.
 
 ## Open questions for you
 
-- **Sparse Jacobians.** For large reaction networks, would a sparse Jacobian (the nonzero
-  pattern computed once, then only nonzero values evaluated) be worth adding? It fits the
-  compiled design well.
-
-- **Container for tensor results.** Plan: LODE writes results into a buffer you provide
-  (`std::span<double>`), with convenience overloads returning `std::vector<double>`, so it can
-  plug into MATL or anything else. Would you prefer direct MATL types?
-- **Variables outside the domain.** Plan: a `Function` whose expressions contain a variable not in
-  its domain (say a rate constant `k`) is an error, so values must be substituted first. The
-  alternative is to treat such variables as parameters supplied at evaluation.
+- **Container for tensor results.** Proposal: keep the `std::span` core and add an optional
+  `lode/matl.hpp` adapter that fills MATL `Matrix` and `CSRMatrix` objects (see the discussion
+  entry).
+- **Parameters.** Proposal: add parameters alongside substitution: symbols given values at each
+  evaluation, excluded from derivatives, and still foldable by partial evaluation (see the
+  discussion entry). Until decided, a variable outside the domain is an error (D22).
 - **GitHub.** The repository is local only. Say when you want it pushed, and whether public or
   private.
