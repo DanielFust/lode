@@ -179,6 +179,11 @@ int main()
     LODE_CHECK_EQUAL(powers.instruction_count(), std::size_t{5});
     Function shared({x, y}, std::vector<Expr>{sin(x*y), cos(x*y)});
     LODE_CHECK_EQUAL(shared.instruction_count(), std::size_t{5});
+    // Constant factors and terms, however they arise, combine into one number each: here one
+    // multiplication and one addition
+    Expr scale = pow(Expr(3)/2, 20)*exp(Expr(1))*sqrt(Expr(2));
+    Function folded({x}, scale*x + log(Expr(3)) + exp(Expr(2)));
+    LODE_CHECK_EQUAL(folded.instruction_count(), std::size_t{3});
     Function constant({x}, Expr(7));
     LODE_CHECK_EQUAL(constant(3.0), 7.0);
     LODE_CHECK_EQUAL(constant.listing(), Text("out[0] = 7.0\n"));

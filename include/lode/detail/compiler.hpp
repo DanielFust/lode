@@ -63,8 +63,9 @@ namespace lode::detail
     *     - identical instructions are emitted once (value numbering);
     *     - integer powers are built by repeated squaring from shared smaller powers, so x^2 is
     *       reused for x^3 and x^4;
-    *     - operations on constants are done now (constant folding), and constants become part
-    *       of instructions (x + 2.5 is one AddConst) instead of occupying registers;
+    *     - operations on constants are done now (constant folding), all the constant factors of
+    *       a product and constant terms of a sum are combined into one number, and constants
+    *       become part of instructions (x + 2.5 is one AddConst) instead of occupying registers;
     *     - a product's negative powers are multiplied together and divided once.
     *
     * The second pass assigns registers: a register is reused as soon as the value it holds has
@@ -139,6 +140,16 @@ namespace lode::detail
         Operand lower(Expr const& expr);
         Operand lower_new(Expr const& expr);
         Operand lower_product(Number const& coefficient, std::vector<Factor> const& factors);
+
+        // A product lowered in parts: a computed numerator and denominator (either may be the
+        // constant 1) and the product of every constant factor with the coefficient
+        struct ProductParts
+        {
+            Operand numerator;
+            Operand denominator;
+            double  scale;
+        };
+        ProductParts product_parts(Number const& coefficient, std::vector<Factor> const& factors);
 
     };
 
@@ -386,33 +397,58 @@ namespace lode::detail
 
             case Kind::Add:
             {
+                // Terms whose value is a constant (such as log(3)) are added up now, with the
+                // sum's constant, and added once at the end
+                AddData const& sum = expr.node().add();
+                double               constant_part = sum.constant.to_double();
+                std::vector<Operand> values;
+                std::vector<double>  coefficients;
+                for (Term const& term : sum.terms)
+                {
+                    // A product's constant factors join the term's coefficient
+                    Operand value       = constant(1.0);
+                    double  coefficient = term.coefficient.to_double();
+                    if (term.expr.is_mul() || term.expr.is_pow())
+                    {
+                        std::vector<Factor> factors = factors_of(term.expr);
+                        ProductParts        parts   = this->product_parts(Number(1), factors);
+                        value        = this->divide(parts.numerator, parts.denominator);
+                        coefficient *= parts.scale;
+                    }
+                    else
+                        value = this->lower(term.expr);
+                    if (value.is_constant)
+                        constant_part += coefficient * value.constant;
+                    else
+                    {
+                        values.push_back(value);
+                        coefficients.push_back(coefficient);
+                    }
+                }
+                if (values.empty()) return constant(constant_part);
+
                 // Start from a term with coefficient 1 if there is one, so that x - y is one
                 // subtraction rather than a negation and an addition
-                AddData const& sum = expr.node().add();
                 std::size_t start = 0;
-                for (std::size_t i = 0; i < sum.terms.size(); ++i)
+                for (std::size_t i = 0; i < values.size(); ++i)
                 {
-                    if (sum.terms[i].coefficient.is_one())
+                    if (coefficients[i] == 1.0)
                     {
                         start = i;
                         break;
                     }
                 }
 
-                Term const& first = sum.terms[start];
-                Operand total = this->multiply(this->lower(first.expr),
-                                               constant(first.coefficient.to_double()));
-                for (std::size_t i = 0; i < sum.terms.size(); ++i)
+                Operand total = this->multiply(values[start], constant(coefficients[start]));
+                for (std::size_t i = 0; i < values.size(); ++i)
                 {
                     if (i == start) continue;
-                    Operand value       = this->lower(sum.terms[i].expr);
-                    double  coefficient = sum.terms[i].coefficient.to_double();
-                    if (coefficient == -1.0)
-                        total = this->subtract(total, value);
+                    if (coefficients[i] == -1.0)
+                        total = this->subtract(total, values[i]);
                     else
-                        total = this->multiply_add(value, coefficient, total);
+                        total = this->multiply_add(values[i], coefficients[i], total);
                 }
-                return this->add(total, constant(sum.constant.to_double()));
+                return this->add(total, constant(constant_part));
             }
 
             case Kind::Mul:
@@ -443,23 +479,32 @@ namespace lode::detail
 
 
    /*-----------------------------------------------------------------------------------------------
-    * Operand Compiler::lower_product(Number const& coefficient, std::vector<Factor> const& factors)
+    * ProductParts Compiler::product_parts(Number const& coefficient,
+    *                                      std::vector<Factor> const& factors)
     *
-    * Lowers coefficient*product of factors as numerator/denominator, so that all negative powers
-    * cost one division. Integer powers use integer_power; a power p/2 uses the square root. The
-    * coefficient is applied last, so that 3*x*y and 5*x*y share the work of x*y.
+    * Lowers a product's factors into a numerator and a denominator, so that all negative powers
+    * cost one division, and multiplies every factor whose value is constant (such as 2^(1/2) or
+    * exp(1)) into the coefficient instead. Integer powers use integer_power; a power p/2 uses
+    * the square root.
     *---------------------------------------------------------------------------------------------*/
-    inline Operand Compiler::lower_product(Number const& coefficient,
-                                           std::vector<Factor> const& factors)
+    inline Compiler::ProductParts Compiler::product_parts(Number const& coefficient,
+                                                          std::vector<Factor> const& factors)
     {
-        Operand numerator   = constant(1.0);
-        Operand denominator = constant(1.0);
+        ProductParts parts{constant(1.0), constant(1.0), coefficient.to_double()};
+        auto multiply_into = [&](Operand& part, Operand value, bool divides)
+        {
+            if (value.is_constant)
+                parts.scale = divides ? parts.scale / value.constant : parts.scale * value.constant;
+            else
+                part = this->multiply(part, value);
+        };
+
         for (Factor const& factor : factors)
         {
             Operand base = this->lower(factor.base);
             if (!factor.exponent.is_number())
             {
-                numerator = this->multiply(numerator, this->power(base, this->lower(factor.exponent)));
+                multiply_into(parts.numerator, this->power(base, this->lower(factor.exponent)), false);
                 continue;
             }
 
@@ -474,20 +519,34 @@ namespace lode::detail
                 Operand root  = by_root ? this->unary(Op::Sqrt, base) : base;
                 Operand value = this->integer_power(root, magnitude);
                 if (p < 0)
-                    denominator = this->multiply(denominator, value);
+                    multiply_into(parts.denominator, value, true);
                 else
-                    numerator = this->multiply(numerator, value);
+                    multiply_into(parts.numerator, value, false);
             }
             else
             {
                 Operand value = this->power(base, constant(exponent.to_double()));
-                numerator = this->multiply(numerator, value);
+                multiply_into(parts.numerator, value, false);
             }
         }
+        return parts;
+    }
 
-        Operand scale = constant(coefficient.to_double());
-        if (numerator.is_constant) return this->divide(this->multiply(numerator, scale), denominator);
-        return this->multiply(this->divide(numerator, denominator), scale);
+
+   /*-----------------------------------------------------------------------------------------------
+    * Operand Compiler::lower_product(Number const& coefficient, std::vector<Factor> const& factors)
+    *
+    * Lowers coefficient*product of factors. The constant part is applied last, so that 3*x*y and
+    * 5*x*y share the work of x*y; over a denominator alone it is a single c/d.
+    *---------------------------------------------------------------------------------------------*/
+    inline Operand Compiler::lower_product(Number const& coefficient,
+                                           std::vector<Factor> const& factors)
+    {
+        ProductParts parts = this->product_parts(coefficient, factors);
+        if (parts.numerator.is_constant)
+            return this->divide(constant(parts.scale), parts.denominator);
+        return this->multiply(this->divide(parts.numerator, parts.denominator),
+                              constant(parts.scale));
     }
 
 

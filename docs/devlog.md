@@ -37,6 +37,9 @@ entry per stretch of work. Commits are named by their short hash.
 - **R6. Indexing reflects the object.** Mathematical objects (matrices, tensors) are indexed
   from 1, as in the mathematics; arrays in the computer-science sense from 0, as offsets from an
   address. MATL follows this. For LODE: see D27.
+- **R7. C++20 at most.** LODE should build with C++20 compilers, because some HPC systems lag
+  behind the latest standards. Newer features (C++23 and later) can be revisited later; low
+  priority.
 
 ## Decisions
 
@@ -263,6 +266,12 @@ outputs a `Tensor<Expr>`, and `evaluate(inputs)` returns a `Tensor<double>`. `ma
 {2, 2})` creates F11 to F22 (with underscores, F_10_1, if a dimension exceeds 9). A scalar
 function called with numbers, `f(1.0, 2.0)`, still returns a `double`: returning a tensor would
 allocate on every call of the most common path. `Function::operator[]` is removed (D27, D30).
+
+**D32. Every constant factor of a product and constant term of a sum is combined.** The compiler
+folded constants only where they happened to be adjacent, so `x*(3/2)^20*e*sqrt(2)` took three
+multiplications. It now multiplies all constant factors into one number (including a product's
+share of its sum term's coefficient, which still uses a multiply-add) and adds all constant
+terms once. Found while answering your question about exact numbers and evaluation speed.
 
 ## Log
 
@@ -520,6 +529,26 @@ allocate on every call of the most common path. `Function::operator[]` is remove
   `det.hessian().shape()` refers into a temporary that is destroyed before the loop body runs
   (see Known limitations).
 
+### 2026-10-27 — Exact numbers and evaluation speed; constants fully folded
+
+- You confirmed: the temporary-lifetime limitation is fine for now, and LODE stays at C++20
+  (R7).
+- You asked whether keeping large constants exact, such as (3/2)^82, could make evaluation
+  slower, and whether expensive symbolic constants could arise during simplification. Findings,
+  from experiments on real output:
+  - Exact constants cost nothing at evaluation, because compiling folds them into numbers.
+    Testing this found that folding was incomplete across separate factors and terms; fixed
+    (D32), so `x*(3/2)^20*e*sqrt(2) + log(3)` now compiles to one multiplication and one
+    addition.
+  - Overflowing into floating point is worse than slow: it stops terms cancelling.
+    `x*(3/2)^82*(2/3)^82` gives `0.9999999999999953*x` instead of `x`, and
+    `(y*(3/2)^82 + x) - y*(3/2)^41*(3/2)^41` leaves a spurious `-0.03125*y` term instead of `x`,
+    so the compiled program does extra work and gives a slightly wrong result.
+  - Where it arises: high-order derivatives (the 20th derivative of x^25 has the coefficient
+    25!/5!, about 1.3e23, past 64 bits), high-degree polynomials with rational coefficients,
+    and large exponents in rate laws.
+  - My recommendation is in Open questions.
+
 ## Known limitations
 
 - `shape()`, `outputs()` and `domain()` return references into the function. Looping over one
@@ -555,8 +584,12 @@ allocate on every call of the most common path. `Function::operator[]` is remove
 
 ## Open questions for you
 
-- **Arbitrary-precision numbers.** Exact rationals are limited to 64-bit parts (D7). Large
-  exponents, such as `(3/2)^81` from a reaction order or a high-degree polynomial, overflow into
-  floating point. Arbitrary-precision integers (as in SymPy and SymEngine) would keep them exact,
-  at some cost in speed when building expressions (not in evaluation, which is in `double`
-  anyway). Worth adding at some point, or is 64-bit exactness enough for your uses?
+- **Arbitrary-precision numbers.** Recommendation: keep numbers exact, as now, and when an exact
+  result outgrows 64 bits, promote it to an arbitrary-precision integer instead of a `double`.
+  Small numbers would keep today's fast path, so the cost is paid only when numbers are large,
+  and only when building expressions: evaluation is unaffected (D32). Users who want
+  floating-point constants can already write them as such (`2.5`), and a function
+  `approximate(expr)` that turns every exact constant into a `double` (like SymPy's `evalf`)
+  would make that explicit. Not urgent; worth doing before high-order derivatives or
+  high-degree polynomials become a use case. Header-only, with no dependency (our own integer
+  type), to suit HPC systems.

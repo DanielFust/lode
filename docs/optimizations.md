@@ -79,17 +79,21 @@ polynomials and rate laws the difference is negligible.)
 
 **Constant folding.** Anything that depends only on numbers is computed once, when compiling.
 Exact constants such as `sqrt(2)`, `e` and `log(3)` stay symbolic in expressions (so algebra
-with them stays exact), and become numbers only now:
+with them stays exact), and become numbers only now. All the constant factors of a product, and
+all the constant terms of a sum, are combined into a single number each, however they arose:
 
 ```
-log(3) + 2^(1/2)*x + x^2*exp(1)        6 instructions
-r1 = r0*1.4142135623730951     sqrt(2)*x
-r1 = r1 + 1.0986122886681098   + log(3)
-r0 = r0*r0
-r0 = r0*2.718281828459045      e*x^2
-r0 = r1 + r0
+log(3) + 2^(1/2)*x + x^2*exp(1)        5 instructions
+r1 = r0*r0                         x^2
+r0 = r0*1.4142135623730951         sqrt(2)*x
+r0 = r1*2.718281828459045 + r0     e*x^2 + sqrt(2)*x, one multiply-add
+r0 = r0 + 1.0986122886681098       + log(3)
 out[0] = r0
 ```
+
+This is why keeping numbers exact costs nothing at evaluation: a product such as
+`x*(3/2)^20*e*sqrt(2)` compiles to one multiplication by 12783.055…, the same as if you had
+written the number yourself.
 
 **Constant operands.** Instructions carry their constant (`AddConst`, `MulConst`,
 `MulAddConst`, …), so constants never take a register or a load. A sum with coefficients becomes
