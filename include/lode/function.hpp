@@ -1,8 +1,8 @@
 /*--------------------------------------------------------------------------------------------------
  * File: function.hpp
  *
- * Description: Functions: expressions bound to an ordered domain of variables and compiled for
- *              fast evaluation, with derivatives and partial evaluation.
+ * Description: Functions: expressions bound to a domain of variables and compiled for fast
+ *              evaluation, with derivatives and partial evaluation.
  *------------------------------------------------------------------------------------------------*/
 #ifndef LODE_FUNCTION_HPP
 #define LODE_FUNCTION_HPP
@@ -14,6 +14,7 @@
 #include <memory>
 #include <ostream>
 #include <span>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -21,6 +22,7 @@
 #include <vector>
 
 #include "lode/expr.hpp"
+#include "lode/tensor.hpp"
 #include "lode/detail/program.hpp"
 #include "lode/detail/compiler.hpp"
 
@@ -70,33 +72,38 @@ namespace lode
    /*-----------------------------------------------------------------------------------------------
     * class Function
     *
-    * A function of an ordered list of variables (its domain), with a scalar, vector, matrix or
-    * higher-rank array of outputs. The outputs are expressions; they are compiled together when
-    * the function is built, so that evaluation runs a flat list of instructions in which shared
+    * A function of a domain of variables, with outputs that are a scalar, a vector, a matrix or
+    * a tensor of higher rank. The outputs are expressions, compiled together when the function
+    * is built, so that evaluation runs a flat list of instructions in which shared
     * subexpressions are computed once.
     *
     *     lode::Symbol x("x"), y("y");
     *     lode::Function f(x, y);
     *     f = x*x*y + sin(y);
-    *     double value = f(1.0, 2.0);       // evaluate
-    *     lode::Function g = f.grad();      // vector of partial derivatives
-    *     lode::Function h = f(x, 2);       // partial evaluation: h(x) = f(x, 2)
+    *     double value = f(1.0, 2.0);           // evaluate
+    *     lode::Function g = f.grad();          // the vector of partial derivatives
+    *     lode::Expr dg2 = g.outputs()(2);      // its second entry, counted from 1
+    *     lode::Function h = f(x, 2);           // partial evaluation: h(x) = f(x, 2)
     *
-    * Outputs are stored in row-major order: for shape {m, n}, output (i, j) is at i*n + j.
-    * Copies share the compiled program, so copying is cheap, and a function can be evaluated from
-    * several threads at once.
+    * The domain is usually a list of variables, but it can be any tensor of them, such as a 3x3
+    * matrix variable (see make_symbols). The gradient appends the domain's shape to the
+    * outputs' shape, so a scalar function of a matrix has a matrix gradient. The derivative
+    * index comes last: the Jacobian of a vector function F is J(i, j) = dF_i/dx_j.
     *
-    * A function may also have parameters (see Parameters). Its inputs are then its domain's
-    * variables followed by its parameters: calls and evaluate take values for all inputs, in that
-    * order, while grad differentiates with respect to the domain only.
+    * Functions are applied, with (); their outputs and values are tensors, indexed with () from
+    * 1. Copies share the compiled program, so copying is cheap, and a function can be evaluated
+    * from several threads at once.
+    *
+    * A function may also have parameters (see Parameters). Its inputs are then the domain's
+    * variables, in storage order, followed by the parameters: calls and evaluate take values for
+    * all inputs, in that order, while grad differentiates with respect to the domain only.
     *---------------------------------------------------------------------------------------------*/
     class Function
     {
       private:
-        std::vector<Symbol>                    domain_;     // Variables, in input order
+        Tensor<Symbol>                         domain_;     // Variables of the domain
         std::vector<Symbol>                    parameters_; // Inputs after the domain
-        std::vector<Expr>                      outputs_;    // Output expressions, row-major
-        std::vector<std::size_t>               shape_;      // Dimensions; empty for a scalar
+        Tensor<Expr>                           outputs_;    // Output expressions
         std::shared_ptr<detail::Program const> program_;    // Compiled outputs
 
       public:
@@ -111,15 +118,13 @@ namespace lode
         explicit Function(SYMBOLS const&... domain)
             : Function(std::vector<Symbol>{domain...}, Expr(0)) {}
 
-        // A scalar function
-        Function(std::vector<Symbol> domain, Expr const& output, Parameters parameters = {});
+        // A scalar function. The domain is a braced list {x, y}, a std::vector, or any tensor
+        // of variables.
+        Function(Tensor<Symbol> domain, Expr const& output, Parameters parameters = {});
 
-        // A vector function, one output per expression
-        Function(std::vector<Symbol> domain, std::vector<Expr> outputs, Parameters parameters = {});
-
-        // A function with outputs of the given shape (outputs in row-major order)
-        Function(std::vector<Symbol> domain, std::vector<Expr> outputs,
-                 std::vector<std::size_t> shape, Parameters parameters = {});
+        // A function with a tensor of outputs: {f, g} for a vector, {{a, b}, {c, d}} for a
+        // matrix, or any Tensor<Expr>
+        Function(Tensor<Symbol> domain, Tensor<Expr> outputs, Parameters parameters = {});
 
         // Redefines the function as a scalar expression over the same domain. Only on a named
         // function: f(x, y) = ... would assign to a temporary and is not allowed.
@@ -127,24 +132,21 @@ namespace lode
 
         /*--------------------------------------- Queries ----------------------------------------*/
 
-        std::vector<Symbol> const& domain() const {return this->domain_;}
+        Tensor<Symbol> const& domain() const {return this->domain_;}
         std::vector<Symbol> const& parameters() const {return this->parameters_;}
-        std::vector<Expr> const& outputs() const {return this->outputs_;}
-        std::vector<std::size_t> const& shape() const {return this->shape_;}
+        Tensor<Expr> const& outputs() const {return this->outputs_;}
+
+        // Dimensions of the outputs; empty for a scalar
+        std::vector<std::size_t> const& shape() const {return this->outputs_.shape();}
 
         // Number of inputs (the domain's variables, then the parameters) and of outputs
         std::size_t input_size() const {return this->domain_.size() + this->parameters_.size();}
         std::size_t size() const {return this->outputs_.size();}
 
-        bool is_scalar() const {return this->shape_.empty();}
+        bool is_scalar() const {return this->outputs_.rank() == 0;}
 
         // The expression of a scalar function; throws std::logic_error otherwise
         Expr const& expr() const;
-
-        // The slice of the outputs at an index of the first dimension: row i of a matrix
-        // function, or entry i of a vector function. Throws std::logic_error for a scalar and
-        // std::out_of_range for a bad index.
-        Function operator[](std::size_t index) const;
 
         // Text form of the outputs: "x*y", "[x, y]", "[[1, 0], [0, 1]]"
         std::string to_string() const;
@@ -158,12 +160,16 @@ namespace lode
 
         // Value of a scalar function at a point, given one number per input. Throws
         // std::invalid_argument for the wrong number of arguments, std::logic_error if the
-        // function is not scalar.
+        // function is not scalar (use evaluate).
         template<class... ARGS>
             requires (std::is_arithmetic_v<ARGS> && ...)
         double operator()(ARGS... args) const;
 
-        // All outputs at one point. Throws std::invalid_argument if a size is wrong.
+        // All outputs at one point, as a tensor of the outputs' shape
+        Tensor<double> evaluate(std::span<double const> inputs) const;
+
+        // All outputs at one point, written in row-major order. Throws std::invalid_argument if
+        // a size is wrong.
         template<class T = double>
         void evaluate(std::span<std::type_identity_t<T> const> inputs,
                       std::span<std::type_identity_t<T>> outputs) const;
@@ -174,9 +180,6 @@ namespace lode
         void evaluate(std::span<std::type_identity_t<T> const> point,
                       std::span<std::type_identity_t<T> const> parameters,
                       std::span<std::type_identity_t<T>> outputs) const;
-
-        // All outputs at one point, returned
-        std::vector<double> evaluate(std::span<double const> inputs) const;
 
         // All outputs at many points: inputs and outputs are stored point by point
         // (inputs[p*input_size() + i], outputs[p*size() + j]). Throws std::invalid_argument if
@@ -195,18 +198,19 @@ namespace lode
         /*---------------------------------- Partial evaluation ----------------------------------*/
 
         // The function with its inputs replaced by the arguments, one per input: numbers fix an
-        // input, symbols keep or rename one, and expressions reparametrize. The new domain is
-        // the variables of the arguments for the domain, in order of first appearance, so for
-        // f(x, y, z), f(x, 2, z) is a function of (x, z) and f(2*t, y, z) one of (t, y, z).
-        // Variables of the arguments for parameters become the new parameters. An integer
-        // argument stays exact; a floating-point one becomes a real.
+        // input, symbols keep or rename one, and expressions reparametrize. The new domain is a
+        // list of the variables of the arguments for the domain, in order of first appearance,
+        // so for f(x, y, z), f(x, 2, z) is a function of (x, z) and f(2*t, y, z) one of
+        // (t, y, z). Variables of the arguments for parameters become the new parameters. An
+        // integer argument stays exact; a floating-point one becomes a real.
         template<class... ARGS>
             requires (!(std::is_arithmetic_v<ARGS> && ...)
                       && (std::convertible_to<ARGS const&, Expr> && ...))
         Function operator()(ARGS const&... args) const {return this->bind({Expr(args)...});}
 
         // The function with some inputs replaced; they leave the domain or the parameters, and
-        // new variables in a replacement join the list the replaced input belonged to
+        // new variables in a replacement join the list the replaced input belonged to. If no
+        // variable of the domain is replaced, the domain keeps its shape.
         Function partial(Substitution const& replacements) const;
 
         /*------------------------------------- Derivatives --------------------------------------*/
@@ -215,26 +219,26 @@ namespace lode
         Function diff(Symbol const& variable) const;
 
         // The derivative of every output with respect to every variable of the domain: the
-        // shape gains a last dimension of domain().size(). A scalar gives its gradient, a
-        // vector its Jacobian matrix. Parameters are not differentiated.
+        // outputs' shape followed by the domain's shape. A scalar gives its gradient, a vector
+        // its Jacobian matrix. Parameters are not differentiated.
         Function grad() const;
 
         // The second derivatives: grad().grad(), the Hessian matrix of a scalar function
         Function hessian() const {return this->grad().grad();}
 
       private:
-        // Checks the shape and compiles the outputs
+        // Compiles the outputs
         void build();
 
         // Checks the sizes of inputs and outputs for one point
         void check_point(std::size_t point_size, std::size_t expected_point,
                          std::size_t parameter_size, std::size_t output_size) const;
 
-        // The function with each variable replaced by the matching argument
+        // The function with each input replaced by the matching argument
         Function bind(std::vector<Expr> const& arguments) const;
 
-        // Text of the outputs from position first, with the given dimensions
-        std::string text(std::size_t first, std::size_t dimension) const;
+        // The outputs with a substitution applied to each
+        Tensor<Expr> substituted(Substitution const& replacements) const;
     };
 
     // Writes the function's text form
@@ -242,39 +246,24 @@ namespace lode
 
 
    /*-----------------------------------------------------------------------------------------------
-    * Function::Function(std::vector<Symbol> domain, Expr const& output)
+    * Function::Function(Tensor<Symbol> domain, Expr const& output, Parameters parameters)
     *
-    * A scalar function. Throws std::invalid_argument if a variable repeats in the domain or the
-    * output uses a variable outside it.
+    * A scalar function. Throws std::invalid_argument if a variable repeats among the domain and
+    * parameters, or the output uses a variable outside them.
     *---------------------------------------------------------------------------------------------*/
-    inline Function::Function(std::vector<Symbol> domain, Expr const& output, Parameters parameters)
-        : domain_(std::move(domain)), parameters_(parameters.symbols()), outputs_{output}
+    inline Function::Function(Tensor<Symbol> domain, Expr const& output, Parameters parameters)
+        : domain_(std::move(domain)), parameters_(parameters.symbols()),
+          outputs_(Shape{}, std::vector<Expr>{output})
     {this->build();}
 
 
    /*-----------------------------------------------------------------------------------------------
-    * Function::Function(std::vector<Symbol> domain, std::vector<Expr> outputs)
+    * Function::Function(Tensor<Symbol> domain, Tensor<Expr> outputs, Parameters parameters)
     *
-    * A vector function with one output per expression.
+    * A function with a tensor of outputs.
     *---------------------------------------------------------------------------------------------*/
-    inline Function::Function(std::vector<Symbol> domain, std::vector<Expr> outputs,
-                              Parameters parameters)
-        : domain_(std::move(domain)), parameters_(parameters.symbols()), outputs_(std::move(outputs)),
-          shape_{outputs_.size()}
-    {this->build();}
-
-
-   /*-----------------------------------------------------------------------------------------------
-    * Function::Function(std::vector<Symbol> domain, std::vector<Expr> outputs,
-    *                    std::vector<std::size_t> shape)
-    *
-    * A function with outputs of any shape. Throws std::invalid_argument if the number of outputs
-    * is not the product of the dimensions.
-    *---------------------------------------------------------------------------------------------*/
-    inline Function::Function(std::vector<Symbol> domain, std::vector<Expr> outputs,
-                              std::vector<std::size_t> shape, Parameters parameters)
-        : domain_(std::move(domain)), parameters_(parameters.symbols()), outputs_(std::move(outputs)),
-          shape_(std::move(shape))
+    inline Function::Function(Tensor<Symbol> domain, Tensor<Expr> outputs, Parameters parameters)
+        : domain_(std::move(domain)), parameters_(parameters.symbols()), outputs_(std::move(outputs))
     {this->build();}
 
 
@@ -285,30 +274,17 @@ namespace lode
     *---------------------------------------------------------------------------------------------*/
     inline Function& Function::operator=(Expr const& output) &
     {
-        this->outputs_ = {output};
-        this->shape_.clear();
+        this->outputs_ = Tensor<Expr>(Shape{}, std::vector<Expr>{output});
         this->build();
         return *this;
     }
 
 
-   /*-----------------------------------------------------------------------------------------------
-    * void Function::build()
-    *
-    * Checks that the shape matches the outputs, then compiles them.
-    *---------------------------------------------------------------------------------------------*/
+    // Compiles the outputs over the domain's variables, then the parameters
     inline void Function::build()
     {
-        std::size_t count = 1;
-        for (std::size_t dimension : this->shape_) count *= dimension;
-        if (count != this->outputs_.size())
-        {
-            throw std::invalid_argument("Function: the shape holds " + std::to_string(count)
-                                        + " outputs, but " + std::to_string(this->outputs_.size())
-                                        + " were given");
-        }
-        detail::Compiler compiler(this->domain_, this->parameters_);
-        this->program_ = compiler.compile(this->outputs_);
+        detail::Compiler compiler(this->domain_.elements(), this->parameters_);
+        this->program_ = compiler.compile(this->outputs_.elements());
     }
 
 
@@ -321,56 +297,19 @@ namespace lode
     {
         if (!this->is_scalar())
             throw std::logic_error("Function::expr: the function is not scalar: " + this->to_string());
-        return this->outputs_.front();
+        return this->outputs_[0];
     }
 
 
-   /*-----------------------------------------------------------------------------------------------
-    * Function Function::operator[](std::size_t index) const
-    *
-    * The outputs at one index of the first dimension, as a function of one rank lower.
-    *---------------------------------------------------------------------------------------------*/
-    inline Function Function::operator[](std::size_t index) const
+    inline std::string Function::to_string() const
     {
-        if (this->is_scalar()) throw std::logic_error("Function: a scalar function has no entries");
-        if (index >= this->shape_.front())
-        {
-            throw std::out_of_range("Function: index " + std::to_string(index)
-                                    + " is out of range for dimension "
-                                    + std::to_string(this->shape_.front()));
-        }
-        std::size_t stride = this->outputs_.size() / this->shape_.front();
-        auto first = this->outputs_.begin() + static_cast<std::ptrdiff_t>(index * stride);
-        std::vector<Expr> outputs(first, first + static_cast<std::ptrdiff_t>(stride));
-        std::vector<std::size_t> shape(this->shape_.begin() + 1, this->shape_.end());
-        return Function(this->domain_, std::move(outputs), std::move(shape),
-                        Parameters(this->parameters_));
+        std::ostringstream text;
+        text << this->outputs_;
+        return text.str();
     }
-
-
-   /*-----------------------------------------------------------------------------------------------
-    * std::string Function::text(std::size_t first, std::size_t dimension) const
-    *
-    * Text of the block of outputs starting at position first, spanning dimensions
-    * shape_[dimension] onward, as nested brackets.
-    *---------------------------------------------------------------------------------------------*/
-    inline std::string Function::text(std::size_t first, std::size_t dimension) const
-    {
-        if (dimension == this->shape_.size()) return this->outputs_[first].to_string();
-
-        std::size_t stride = 1;
-        for (std::size_t d = dimension + 1; d < this->shape_.size(); ++d) stride *= this->shape_[d];
-
-        std::string result = "[";
-        for (std::size_t i = 0; i < this->shape_[dimension]; ++i)
-            result += (i == 0 ? "" : ", ") + this->text(first + i * stride, dimension + 1);
-        return result + "]";
-    }
-
-    inline std::string Function::to_string() const {return this->text(0, 0);}
 
     inline std::ostream& operator<<(std::ostream& out, Function const& function)
-    {return out << function.to_string();}
+    {return out << function.outputs();}
 
 
    /*-----------------------------------------------------------------------------------------------
@@ -379,7 +318,7 @@ namespace lode
     * Value of a scalar function at a point.
     *
     * Template Parameters:
-    *     ARGS      Arithmetic types, one per variable
+    *     ARGS      Arithmetic types, one per input
     *---------------------------------------------------------------------------------------------*/
     template<class... ARGS>
         requires (std::is_arithmetic_v<ARGS> && ...)
@@ -398,6 +337,19 @@ namespace lode
 
 
    /*-----------------------------------------------------------------------------------------------
+    * Tensor<double> Function::evaluate(std::span<double const> inputs) const
+    *
+    * All outputs at one point, as a tensor with the outputs' shape.
+    *---------------------------------------------------------------------------------------------*/
+    inline Tensor<double> Function::evaluate(std::span<double const> inputs) const
+    {
+        Tensor<double> values(Shape(this->outputs_.shape()));
+        this->evaluate<double>(inputs, std::span<double>(values.data(), values.size()));
+        return values;
+    }
+
+
+   /*-----------------------------------------------------------------------------------------------
     * void Function::evaluate(std::span<T const> inputs, std::span<T> outputs) const
     *
     * All outputs at one point.
@@ -406,7 +358,7 @@ namespace lode
     *     T          Number type (double unless given)
     *
     * Parameters:
-    *     inputs     One value per variable, in domain order
+    *     inputs     One value per input: the domain's variables, then the parameters
     *     outputs    One value per output, row-major, written
     *---------------------------------------------------------------------------------------------*/
     template<class T>
@@ -428,7 +380,7 @@ namespace lode
     *     T             Number type (double unless given)
     *
     * Parameters:
-    *     point         One value per variable of the domain, in order
+    *     point         One value per variable of the domain, in storage order
     *     parameters    One value per parameter, in order
     *     outputs       One value per output, row-major, written
     *---------------------------------------------------------------------------------------------*/
@@ -475,13 +427,6 @@ namespace lode
             throw std::invalid_argument("Function: expected room for " + std::to_string(this->size())
                                         + " outputs, got " + std::to_string(output_size));
         }
-    }
-
-    inline std::vector<double> Function::evaluate(std::span<double const> inputs) const
-    {
-        std::vector<double> outputs(this->size());
-        this->evaluate<double>(inputs, outputs);
-        return outputs;
     }
 
 
@@ -558,13 +503,24 @@ namespace lode
     }
 
 
+    // The outputs with a substitution applied to each, keeping their shape
+    inline Tensor<Expr> Function::substituted(Substitution const& replacements) const
+    {
+        std::vector<Expr> outputs;
+        outputs.reserve(this->outputs_.size());
+        for (Expr const& output : this->outputs_)
+            outputs.push_back(lode::substitute(output, replacements));
+        return Tensor<Expr>(Shape(this->outputs_.shape()), std::move(outputs));
+    }
+
+
    /*-----------------------------------------------------------------------------------------------
     * Function Function::bind(std::vector<Expr> const& arguments) const
     *
-    * Replaces each input by the matching argument. The new domain is the variables of the
-    * arguments for the domain, in order of first appearance (each argument's own variables in
-    * canonical order); the new parameters are the other variables of the arguments for the
-    * parameters.
+    * Replaces each input by the matching argument. The new domain is the list of the variables
+    * of the arguments for the domain, in order of first appearance (each argument's own
+    * variables in canonical order); the new parameters are the other variables of the arguments
+    * for the parameters.
     *---------------------------------------------------------------------------------------------*/
     inline Function Function::bind(std::vector<Expr> const& arguments) const
     {
@@ -587,12 +543,7 @@ namespace lode
             Symbol const& input = i < n_domain ? this->domain_[i] : this->parameters_[i - n_domain];
             if (arguments[i] != input) replacements.emplace_back(input, arguments[i]);
         }
-
-        std::vector<Expr> outputs;
-        outputs.reserve(this->outputs_.size());
-        for (Expr const& output : this->outputs_)
-            outputs.push_back(lode::substitute(output, replacements));
-        return Function(std::move(domain), std::move(outputs), this->shape_,
+        return Function(std::move(domain), this->substituted(replacements),
                         Parameters(std::move(parameters)));
     }
 
@@ -601,11 +552,12 @@ namespace lode
     * Function Function::partial(Substitution const& replacements) const
     *
     * Replaces some inputs. Each replaced input leaves the domain or the parameters, and the new
-    * variables of its replacement join the same list, in order of first appearance.
+    * variables of its replacement join the same list, in order of first appearance. A domain
+    * none of whose variables is replaced keeps its shape; otherwise the new domain is a list.
     *---------------------------------------------------------------------------------------------*/
     inline Function Function::partial(Substitution const& replacements) const
     {
-        auto contains = [](std::vector<Symbol> const& list, Symbol const& variable)
+        auto contains = [](auto const& list, Symbol const& variable)
         {
             for (Symbol const& other : list)
                 if (other == variable) return true;
@@ -620,8 +572,14 @@ namespace lode
 
         std::vector<Symbol> domain;
         std::vector<Symbol> parameters;
+        bool domain_changed = false;
         for (Symbol const& variable : this->domain_)
-            if (!is_replaced(variable)) domain.push_back(variable);
+        {
+            if (is_replaced(variable))
+                domain_changed = true;
+            else
+                domain.push_back(variable);
+        }
         for (Symbol const& variable : this->parameters_)
             if (!is_replaced(variable)) parameters.push_back(variable);
         for (auto const& [replaced, value] : replacements)
@@ -632,11 +590,8 @@ namespace lode
                 detail::append_new_symbols(parameters, value, domain);
         }
 
-        std::vector<Expr> outputs;
-        outputs.reserve(this->outputs_.size());
-        for (Expr const& output : this->outputs_)
-            outputs.push_back(lode::substitute(output, replacements));
-        return Function(std::move(domain), std::move(outputs), this->shape_,
+        Tensor<Symbol> new_domain = domain_changed ? Tensor<Symbol>(std::move(domain)) : this->domain_;
+        return Function(std::move(new_domain), this->substituted(replacements),
                         Parameters(std::move(parameters)));
     }
 
@@ -652,7 +607,7 @@ namespace lode
         std::vector<Expr> outputs;
         outputs.reserve(this->outputs_.size());
         for (Expr const& output : this->outputs_) outputs.push_back(lode::diff(output, variable));
-        return Function(this->domain_, std::move(outputs), this->shape_,
+        return Function(this->domain_, Tensor<Expr>(Shape(this->outputs_.shape()), std::move(outputs)),
                         Parameters(this->parameters_));
     }
 
@@ -660,8 +615,10 @@ namespace lode
    /*-----------------------------------------------------------------------------------------------
     * Function Function::grad() const
     *
-    * Every output differentiated with respect to every variable of the domain; output k's
-    * derivatives are entries k*n to (k + 1)*n - 1 of the result, for n = domain().size().
+    * Every output differentiated with respect to every variable of the domain. The result's
+    * shape is the outputs' shape followed by the domain's: for outputs F and domain x, the
+    * entry (i..., j...) is dF(i...)/dx(j...), and in storage the derivatives of each output are
+    * consecutive, in the domain's storage order.
     *---------------------------------------------------------------------------------------------*/
     inline Function Function::grad() const
     {
@@ -673,9 +630,9 @@ namespace lode
                 outputs.push_back(lode::diff(output, variable));
         }
 
-        std::vector<std::size_t> shape = this->shape_;
-        shape.push_back(this->domain_.size());
-        return Function(this->domain_, std::move(outputs), std::move(shape),
+        std::vector<std::size_t> shape = this->outputs_.shape();
+        shape.insert(shape.end(), this->domain_.shape().begin(), this->domain_.shape().end());
+        return Function(this->domain_, Tensor<Expr>(Shape(std::move(shape)), std::move(outputs)),
                         Parameters(this->parameters_));
     }
 }

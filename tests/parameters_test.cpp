@@ -57,20 +57,21 @@ int main()
     Function jacobian = rhs.grad();
     LODE_CHECK(jacobian.shape() == (std::vector<std::size_t>{2, 2}));
     LODE_CHECK_EQUAL(jacobian.parameters().size(), std::size_t{3});
-    LODE_CHECK_EQUAL(jacobian[0][1].expr(), -k*ca);
+    LODE_CHECK_EQUAL(jacobian.outputs()(1, 2), -k*ca);
 
     // Parameter values given separately, or as the last inputs: the same result
     std::vector<double> state{0.8, 0.6};
     std::vector<double> parameters{300.0, 1e7, 5e4};
     std::vector<double> separate(4);
     jacobian.evaluate(state, parameters, separate);
-    std::vector<double> together = jacobian.evaluate(std::vector<double>{0.8, 0.6, 300.0, 1e7, 5e4});
+    std::vector<double> all_inputs{0.8, 0.6, 300.0, 1e7, 5e4};
+    std::vector<double> together = jacobian.evaluate(all_inputs).elements();
     LODE_CHECK(close(separate, together));
 
     // ... and the same as substituting the values before building
     Function substituted = jacobian.partial({{t, 300.0}, {a, 1e7}, {ea, 5e4}});
     LODE_CHECK(substituted.parameters().empty());
-    LODE_CHECK(close(separate, substituted.evaluate(state)));
+    LODE_CHECK(close(separate, substituted.evaluate(state).elements()));
 
     // Changing a parameter needs no rebuild
     double k300 = 1e7 * std::exp(-5e4 / (8.314 * 300.0));
@@ -99,7 +100,7 @@ int main()
 
     // A sensitivity: the derivative with respect to a parameter, on request
     Function sensitivity = rhs.diff(ea);
-    LODE_CHECK_EQUAL(sensitivity[0].expr(), k*ca*cb/(r*t));
+    LODE_CHECK_EQUAL(sensitivity.outputs()(1), k*ca*cb/(r*t));
 
     // Scalar calls take every input in order
     Function scalar({ca}, a*ca, {a});

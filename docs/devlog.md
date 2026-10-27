@@ -18,10 +18,9 @@ entry per stretch of work. Commits are named by their short hash.
 | — | Discussion: indexing (R6) | Done: convention settled (D27) | |
 | — | Published on GitHub, with continuous integration | Done (D28) | |
 | — | Discussion: tensor-valued domains and codomains of functions | Done: decided (D30) | |
-| 6 | Tensor container; functions indexed through `outputs()`; tensor-valued domains | Next | |
+| 6 | Tensor container; functions indexed through `outputs()`; tensor-valued domains | Done | *Add Tensor* |
 | 3b | Parameters: inputs excluded from derivatives | Done | `743e2e2` |
-| — | Sparse Jacobians, written into MATL's `CSRMatrix` | After the indexing discussion | |
-| — | Discussion: the gradient of a vector of functions | After sparse Jacobians | |
+| — | Sparse Jacobians, written into MATL's `CSRMatrix` | Next | |
 | — | A tensor container wrapping contiguous results, of any rank | Planned | |
 
 ## Requirements from you
@@ -251,6 +250,19 @@ returning a `Tensor<Expr>`; evaluation that can return a `Tensor<double>`; and d
 tensors, for which `grad()` appends the domain's whole shape (a scalar energy of a 3x3 matrix
 variable has a 3x3 gradient). The gradient's derivative index comes last: J_ij = dF_i/dx_j.
 `Function::operator[]` is removed in favour of this.
+
+**D31. The tensor container.** `Tensor<T>` holds any rank in contiguous row-major storage:
+`t(i, j, ...)` is a checked entry counted from 1, `t[k]` an unchecked storage element counted
+from 0 (D27). Construction follows `std::vector`: parentheses give dimensions
+(`Tensor<double> a(2, 3)`), braces give elements (`{x, y}`, `{{a, b}, {c, d}}`), and a runtime
+shape is the explicit type `Shape` (`Tensor<int>(Shape{2, 2}, elements)`). Allowing a shape as a
+braced list would have made `Tensor<double> a({3, 4})` silently mean the two-element vector
+[3, 4], because braced lists prefer element-list constructors. In `Function`, the domain is a
+`Tensor<Symbol>` (a braced list `{x, y}` is a rank-1 tensor, so existing code is unchanged), the
+outputs a `Tensor<Expr>`, and `evaluate(inputs)` returns a `Tensor<double>`. `make_symbols("F",
+{2, 2})` creates F11 to F22 (with underscores, F_10_1, if a dimension exceeds 9). A scalar
+function called with numbers, `f(1.0, 2.0)`, still returns a `double`: returning a tensor would
+allocate on every call of the most common path. `Function::operator[]` is removed (D27, D30).
 
 ## Log
 
@@ -490,7 +502,30 @@ variable has a 3x3 gradient). The gradient's derivative index comes last: J_ij =
   on both compilers, and the derivative and compiled-function tests pass over 30 seeds each.
 - You decided the function design (D30), and are aligned on starting it.
 
+### 2026-10-27 — CI green; phase 6: tensors
+
+- The CI run for the fixes passed all five jobs.
+- `include/lode/tensor.hpp`: `Shape`, `Tensor<T>` and `make_symbols` (D31). `Function` now uses
+  tensors for its domain, outputs and values; `grad()` appends the domain's shape, so the
+  gradient of a scalar function of a matrix is a matrix, and the derivative index comes last
+  (J(i, j) = dF_i/dx_j). `operator[]` on functions is gone; tests and examples index
+  `outputs()` instead.
+- Tests: `tests/tensor_test.cpp` covers construction, both kinds of indexing and their
+  errors, printing, `make_symbols`, the Jacobian's index order, a quadratic form (gradient
+  (A + A^T)x, Hessian A + A^T), the determinant of a 2x2 matrix variable (gradient = cofactor
+  matrix; Hessian of rank 4), evaluation to tensors, and how partial evaluation treats a shaped
+  domain. The code generation test gained a determinant, its gradient and its Hessian.
+- Example 10 (`examples/10_tensors.cpp`) shows tensors and functions of vectors and matrices.
+  Writing it caught a mistake of mine worth knowing about: looping over
+  `det.hessian().shape()` refers into a temporary that is destroyed before the loop body runs
+  (see Known limitations).
+
 ## Known limitations
+
+- `shape()`, `outputs()` and `domain()` return references into the function. Looping over one
+  taken from a temporary, as in `for (auto d : f.hessian().shape())`, uses a destroyed object:
+  C++20 does not extend the temporary's life through the loop (C++23 does). Keep the function
+  in a variable first.
 
 - The algebraic laws hold exactly only while numbers stay exact: rationals have 64-bit parts,
   and a result that overflows becomes a `double` (D7), after which equal values can differ in

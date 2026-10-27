@@ -11,6 +11,7 @@ set(LODE_TESTS
     evaluate_test
     function_test
     parameters_test
+    tensor_test
 )
 
 foreach (test_name IN LISTS LODE_TESTS)

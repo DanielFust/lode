@@ -58,13 +58,13 @@ namespace
                 values.emplace_back(variable, point.back());
             }
 
-            double compiled  = f.evaluate(point).front();
+            double compiled  = f.evaluate(point)();
             double reference = lode::evaluate(e, values);
             LODE_CHECK(close(compiled, reference, 1e-12));
 
             // Gradient against complex step, where the function is finite
             if (!std::isfinite(compiled)) continue;
-            std::vector<double> gradient = f.grad().evaluate(point);
+            std::vector<double> gradient = f.grad().evaluate(point).elements();
             for (std::size_t i = 0; i < variables.size(); ++i)
             {
                 if (!std::isfinite(gradient[i])) continue;
@@ -98,13 +98,14 @@ int main()
     // Gradient and Hessian
     Function grad_f = f.grad();
     LODE_CHECK_EQUAL(grad_f.to_string(), Text("[4*x + y*z + 1, x*z + 1, x*y]"));
-    std::vector<double> gradient_at = grad_f.evaluate(std::vector<double>{1.0, 2.0, 3.0});
+    std::vector<double> gradient_at = grad_f.evaluate(std::vector<double>{1.0, 2.0, 3.0}).elements();
     LODE_CHECK(gradient_at == (std::vector<double>{11.0, 4.0, 2.0}));
-    LODE_CHECK_EQUAL(grad_f[1].expr(), x*z + 1);
+    LODE_CHECK_EQUAL(grad_f.outputs()(2), x*z + 1);
     Function hessian_f = f.hessian();
     LODE_CHECK_EQUAL(hessian_f.to_string(), Text("[[4, z, y], [z, 0, x], [y, x, 0]]"));
     LODE_CHECK(hessian_f.shape() == (std::vector<std::size_t>{3, 3}));
-    LODE_CHECK_EQUAL(hessian_f[2].to_string(), Text("[y, x, 0]"));
+    LODE_CHECK_EQUAL(hessian_f.outputs()(3, 1), y);
+    LODE_CHECK_EQUAL(hessian_f.outputs()(3, 2), x);
     LODE_CHECK_EQUAL(f.diff(y).expr(), x*z + 1);
 
     // Robertson's stiff chemical kinetics: right-hand side and exact Jacobian
@@ -120,7 +121,7 @@ int main()
     Function jacobian = rhs.grad();
     LODE_CHECK(jacobian.shape() == (std::vector<std::size_t>{3, 3}));
     std::vector<double> state{0.9, 2e-5, 0.1};
-    std::vector<double> computed = jacobian.evaluate(state);
+    std::vector<double> computed = jacobian.evaluate(state).elements();
     std::vector<double> by_hand{-0.04, 1e4 * state[2], 1e4 * state[1],
                                 0.04, -1e4 * state[2] - 6e7 * state[1], -1e4 * state[1],
                                 0.0, 6e7 * state[1], 0.0};
@@ -144,7 +145,7 @@ int main()
     for (std::size_t p = 0; p < POINTS; ++p)
     {
         std::span<double const> point = std::span<double const>(inputs).subspan(3 * p, 3);
-        std::vector<double>     single = jacobian.evaluate(point);
+        std::vector<double>     single = jacobian.evaluate(point).elements();
         for (std::size_t j = 0; j < 9; ++j)
             batch_matches = batch_matches && close(batch[9 * p + j], single[j]);
     }
@@ -193,13 +194,14 @@ int main()
     // Errors
     LODE_CHECK_THROWS(Function({x}, x*y), std::invalid_argument);
     LODE_CHECK_THROWS(Function({x, x}, Expr(x)), std::invalid_argument);
-    LODE_CHECK_THROWS(Function({x}, std::vector<Expr>{x, x}, {3}), std::invalid_argument);
+    std::vector<Expr> two{x, x};
+    LODE_CHECK_THROWS(lode::Tensor<Expr>(lode::Shape{3}, two), std::invalid_argument);
     LODE_CHECK_THROWS(f(1.0, 2.0), std::invalid_argument);
     LODE_CHECK_THROWS(grad_f(1.0, 2.0, 3.0), std::logic_error);
     LODE_CHECK_THROWS(grad_f.expr(), std::logic_error);
-    LODE_CHECK_THROWS(grad_f[3], std::out_of_range);
-    LODE_CHECK_THROWS(f[0], std::logic_error);
-    LODE_CHECK_THROWS(f.evaluate(std::vector<double>{1.0}), std::invalid_argument);
+    LODE_CHECK_THROWS(grad_f.outputs()(4), std::out_of_range);
+    LODE_CHECK_THROWS(grad_f.outputs()(0), std::out_of_range);
+        LODE_CHECK_THROWS(f.evaluate(std::vector<double>{1.0}), std::invalid_argument);
     std::vector<double> four(4);
     std::vector<double> nine(9);
     LODE_CHECK_THROWS(jacobian.evaluate_batch(four, nine), std::invalid_argument);

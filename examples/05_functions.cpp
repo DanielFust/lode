@@ -45,23 +45,23 @@ int main()
     Function hessian = f.hessian();
     std::cout << "hessian f  = " << hessian << "\n";         // [[4, z, y], [z, 0, x], [y, x, 0]]
 
-    // [i] takes one entry of a vector, or one row of a matrix (counting from 0)
-    std::cout << "df/dy      = " << gradient[1] << "\n";     // x*z + 1
+    // A function's outputs are a tensor of expressions; index it with (), counting from 1
+    std::cout << "df/dy      = " << gradient.outputs()(2) << "\n";        // x*z + 1
+    std::cout << "d2f/dxdz   = " << hessian.outputs()(1, 3) << "\n";      // y
 
     /*-------------------------- Evaluating vector and matrix functions --------------------------*/
 
-    // evaluate writes every output, row by row. Inputs and outputs can be std::vector or any
-    // contiguous storage (they are passed as std::span).
+    // evaluate returns the values as a tensor of numbers, with the outputs' shape. The inputs
+    // can be a std::vector or any contiguous storage (they are passed as a std::span).
     std::vector<double> point{1.0, 2.0, 3.0};
-    std::vector<double> values = gradient.evaluate(point);
-    std::cout << "grad f at (1, 2, 3) =";
-    for (double value : values) std::cout << " " << value;  // 11 4 2
-    std::cout << "\n";
+    Tensor<double> values = hessian.evaluate(point);
+    std::cout << "hessian f at (1, 2, 3) = " << values << "\n";   // [[4, 3, 2], [3, 0, 1], [2, 1, 0]]
+    std::cout << "its (1, 2) entry        = " << values(1, 2) << "\n";   // 3
 
-    // To avoid allocating, pass the output storage
+    // To avoid allocating, pass storage for the outputs; they are written row by row
     std::vector<double> h(9);
     hessian.evaluate(point, h);
-    std::cout << "hessian f at (1, 2, 3), row by row =";
+    std::cout << "hessian f, row by row   =";
     for (double value : h) std::cout << " " << value;       // 4 3 2 3 0 1 2 1 0
     std::cout << "\n";
 

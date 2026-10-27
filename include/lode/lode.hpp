@@ -10,6 +10,7 @@
 #include "lode/version.hpp"
 #include "lode/number.hpp"
 #include "lode/expr.hpp"
+#include "lode/tensor.hpp"
 #include "lode/function.hpp"
 
 #endif

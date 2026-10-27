@@ -69,6 +69,13 @@ namespace lode::test
         std::vector<Symbol> awkward_domain{keyword, generated, first_a, second_a, primed};
         cases.push_back({"awkward_names", Function(awkward_domain, awkward)});
 
+        // A function of a matrix variable, its gradient (a matrix) and its Hessian (rank 4)
+        Tensor<Symbol> f = make_symbols("F", {2, 2});
+        Function det(f, f(1, 1)*f(2, 2) - f(1, 2)*f(2, 1) + exp(f(1, 2)));
+        cases.push_back({"determinant", det});
+        cases.push_back({"determinant_gradient", det.grad()});
+        cases.push_back({"determinant_hessian", det.hessian()});
+
         // Random vector functions and their Jacobians
         RandomExpressions random(20261027, {x, y, z}, true);
         for (int i = 0; i < 60; ++i)

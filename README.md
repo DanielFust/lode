@@ -45,8 +45,9 @@ lode::Function grad_f = f.grad();   // [4*x + y*z + 1, x*z + 1, x*y]
 lode::Function hess_f = f.hessian(); // [[4, z, y], [z, 0, x], [y, x, 0]]
 lode::Function g = f(x, 2, z);      // partial evaluation: g(x, z) = x + 2*x^2 + 2*x*z + 3
 
-std::vector<double> gradient = grad_f.evaluate(std::vector<double>{1.0, 2.0, 3.0});
-grad_f.evaluate_batch(points, results);   // many points at once, fastest
+lode::Expr d2 = grad_f.outputs()(2);      // x*z + 1: outputs are a tensor, indexed from 1
+lode::Tensor<double> g_at = grad_f.evaluate(std::vector<double>{1.0, 2.0, 3.0});   // [11, 4, 2]
+grad_f.evaluate_batch(points, results);   // many points at once, into your own storage
 ```
 
 Vector functions work the same way; the gradient of a vector function is its Jacobian:
@@ -55,8 +56,22 @@ Vector functions work the same way; the gradient of a vector function is its Jac
 lode::Function rhs({y1, y2, y3}, {-k1*y1 + k3*y2*y3,
                                   k1*y1 - k3*y2*y3 - k2*pow(y2, 2),
                                   k2*pow(y2, 2)});
-lode::Function jacobian = rhs.grad();     // 3x3, compiled together
+lode::Function jacobian = rhs.grad();     // 3x3, compiled together; J(i, j) = dF_i/dy_j
 ```
+
+Variables can be arranged as a tensor too. The gradient appends the variables' shape, so a
+scalar function of a matrix has a matrix gradient:
+
+```cpp
+lode::Tensor<lode::Symbol> F = lode::make_symbols("F", {2, 2});       // F11, F12, F21, F22
+lode::Function det(F, F(1, 1)*F(2, 2) - F(1, 2)*F(2, 1));
+det.grad();                               // [[F22, -F21], [-F12, F11]], the cofactor matrix
+det.hessian();                            // a tensor of rank 4
+```
+
+Indexing follows one convention throughout: `()` gives a mathematical entry, counting from 1
+(`A(1, 2)`), and `[]` gives an element of storage, counting from 0 (`A[k]`). Functions
+themselves are applied with `()`, not indexed; their outputs and values are tensors.
 
 Parameters are inputs that derivatives leave alone, for values that change between
 evaluations without rebuilding the function:
@@ -123,7 +138,8 @@ evaluation, and an application to stiff chemical kinetics. See
    Jacobian, Hessian, and partial evaluation. *(Done.)*
 4. Examples of usage and core features, and a stiff chemical kinetics application. *(Done.)*
 5. C++ code generation *(done)*; `expand` and `collect`.
-6. Sparse Jacobians, and a tensor container for results.
+6. A tensor container; functions with tensor-valued domains and outputs. *(Done.)*
+7. Sparse Jacobians, written into MATL's sparse matrices.
 
 ## Building
 
