@@ -351,20 +351,31 @@ namespace lode::detail
 
             case Kind::Add:
             {
+                // Start from a term with coefficient 1 if there is one, so that x - y is one
+                // subtraction rather than a negation and an addition
                 AddData const& sum = expr.node().add();
-                Operand total = constant(0.0);
-                bool    first = true;
-                for (Term const& term : sum.terms)
+                std::size_t start = 0;
+                for (std::size_t i = 0; i < sum.terms.size(); ++i)
                 {
-                    Operand value       = this->lower(term.expr);
-                    double  coefficient = term.coefficient.to_double();
-                    if (first)
-                        total = this->multiply(value, constant(coefficient));
-                    else if (coefficient == -1.0)
+                    if (sum.terms[i].coefficient.is_one())
+                    {
+                        start = i;
+                        break;
+                    }
+                }
+
+                Term const& first = sum.terms[start];
+                Operand total = this->multiply(this->lower(first.expr),
+                                               constant(first.coefficient.to_double()));
+                for (std::size_t i = 0; i < sum.terms.size(); ++i)
+                {
+                    if (i == start) continue;
+                    Operand value       = this->lower(sum.terms[i].expr);
+                    double  coefficient = sum.terms[i].coefficient.to_double();
+                    if (coefficient == -1.0)
                         total = this->subtract(total, value);
                     else
                         total = this->multiply_add(value, coefficient, total);
-                    first = false;
                 }
                 return this->add(total, constant(sum.constant.to_double()));
             }

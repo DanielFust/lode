@@ -12,9 +12,9 @@ entry per stretch of work. Commits are named by their short hash.
 | 1 | Expression core: numbers, symbols, sums, products, powers in canonical form | Done | `a55ce30` |
 | 2 | Differentiation, substitution, `exp` `log` `sin` `cos`, reference evaluator | Done | `0838c4e` |
 | 3 | `Function`: compiled fast evaluation, batches, gradient/Jacobian/Hessian, partial evaluation | Done | `0e09903` |
-| 4 | Worked examples as tests: finite-element shape functions, stiff chemistry Jacobian | Planned | |
+| 4 | Examples of usage and core features; chemical kinetics application | Done | *Add examples* |
 | 5 | `expand`, `collect`, C++ code generation | Planned | |
-| 3b | Parameters: inputs excluded from derivatives | Done | *Add parameters to Function* |
+| 3b | Parameters: inputs excluded from derivatives | Done | `743e2e2` |
 | — | Sparse Jacobians, written into MATL's `CSRMatrix` | Planned (you agreed) | |
 | — | A tensor container wrapping contiguous results, of any rank | Planned | |
 
@@ -328,6 +328,29 @@ indexes them with any rank, as nablaxx's `Tensor` was meant to, will follow. MAT
   without rebuilding; folding some parameters and keeping one; sensitivities; batches with
   shared parameters; errors. All 11 test programs pass on Clang, GCC and the sanitizers;
   benchmark timings are unchanged.
+
+### 2026-10-27 — Phase 4: examples
+
+- You redirected phase 4: start with basic examples of usage and core features, include
+  chemistry as an application, and leave out finite elements (too specialized for a general
+  audience).
+- Nine programs in `examples/`, following MATL's conventions (numbered files, a header saying
+  what each shows and how to run it, sections with dividers, an index in
+  `examples/README.md`):
+  1. expressions and automatic simplification; 2. powers, roots and elementary functions, and
+  which simplifications are automatic; 3. differentiation; 4. substitution and evaluation;
+  5. `Function`, gradients, Hessians, Jacobians and the compiled program; 6. partial evaluation;
+  7. parameters; 8. batch evaluation; 9. Robertson's stiff kinetics integrated with backward
+  Euler and Newton's method, using the exact Jacobian with the rate constants as parameters.
+- Every expected result is written as a comment beside the code that prints it, and each was
+  checked against the actual output.
+- The examples build by default and run under CTest (`LODE_BUILD_EXAMPLES`), so they cannot go
+  stale: 20 tests now (11 test programs and 9 examples).
+- The chemistry example reproduces the reference solution at t = 40 to about 0.05% (first-order
+  backward Euler, about 2,000 steps from t = 0 to 40,000) and conserves total concentration to
+  1e-15.
+- Writing the examples turned up one compiler improvement: a sum now starts from a term with
+  coefficient 1, so `x*z - y` compiles to one subtraction instead of a negation and an addition.
 
 ## Known limitations
 

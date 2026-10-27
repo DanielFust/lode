@@ -67,6 +67,13 @@ jac.evaluate(state, parameter_values, J);    // T, A, Ea given at each call
 lode::Function jac_T = jac.partial({{A, 1e7}, {Ea, 5e4}});   // fold the constants, keep T
 ```
 
+## Examples
+
+[`examples/`](examples) has short, annotated programs: expressions and simplification,
+functions, differentiation, substitution, `Function`, partial evaluation, parameters, batch
+evaluation, and an application to stiff chemical kinetics. See
+[examples/README.md](examples/README.md).
+
 ## Intended uses
 
 - Shape functions and their derivatives for finite elements.
@@ -97,7 +104,7 @@ lode::Function jac_T = jac.partial({{A, 1e7}, {Ea, 5e4}});   // fold the constan
    *(Done.)*
 3. `Function` with fast compiled evaluation (including batches of points), gradient,
    Jacobian, Hessian, and partial evaluation. *(Done.)*
-4. Examples as tests: finite-element shape functions and a stiff chemistry Jacobian.
+4. Examples of usage and core features, and a stiff chemical kinetics application. *(Done.)*
 5. Later: expand, collect, and C++ code generation.
 
 ## Building

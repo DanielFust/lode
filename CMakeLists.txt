@@ -17,6 +17,26 @@ if (LODE_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
+# Example programs build by default when LODE is the top-level project, and run as tests so
+# that they keep working. examples/01_expressions.cpp builds build/examples/01_expressions.
+option(LODE_BUILD_EXAMPLES "Build the LODE example programs" ${PROJECT_IS_TOP_LEVEL})
+if (LODE_BUILD_EXAMPLES)
+    enable_testing()
+    file(GLOB lode_examples CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/examples/*.cpp")
+    foreach (source IN LISTS lode_examples)
+        get_filename_component(name "${source}" NAME_WE)
+        add_executable(lode_example_${name} "${source}")
+        set_target_properties(lode_example_${name} PROPERTIES
+            OUTPUT_NAME "${name}"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
+        target_link_libraries(lode_example_${name} PRIVATE lode::lode)
+        if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(lode_example_${name} PRIVATE -Wall -Wextra -Werror)
+        endif()
+        add_test(NAME example_${name} COMMAND lode_example_${name})
+    endforeach()
+endif()
+
 # Benchmarks build on request; time them in a Release build.
 option(LODE_BUILD_BENCHMARKS "Build the LODE benchmarks" OFF)
 if (LODE_BUILD_BENCHMARKS)
