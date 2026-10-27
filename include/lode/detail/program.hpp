@@ -101,8 +101,7 @@ namespace lode::detail
 
         // Evaluates one point: input_count inputs, output_count outputs
         template<class T>
-        void run(T const* inputs, T* outputs) const
-        {this->run(inputs, this->input_count_, static_cast<T const*>(nullptr), outputs);}
+        void run(T const* inputs, T* outputs) const;
 
         // Evaluates one point whose inputs come in two parts: the first `first_count` from
         // `first`, the rest from `rest`
@@ -124,6 +123,21 @@ namespace lode::detail
         template<class T, class LANES>
         void execute(T* registers, LANES lanes, T* outputs) const;
     };
+
+
+   /*-----------------------------------------------------------------------------------------------
+    * void Program::run(T const* inputs, T* outputs) const
+    *
+    * Evaluates the program at one point, with all inputs in one array.
+    *---------------------------------------------------------------------------------------------*/
+    template<class T>
+    void Program::run(T const* inputs, T* outputs) const
+    {
+        thread_local std::vector<T> registers;
+        if (registers.size() < this->register_count_) registers.resize(this->register_count_);
+        std::copy(inputs, inputs + this->input_count_, registers.begin());
+        this->execute(registers.data(), std::integral_constant<std::size_t, 1>{}, outputs);
+    }
 
 
    /*-----------------------------------------------------------------------------------------------

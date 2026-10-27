@@ -54,7 +54,8 @@ namespace lode::detail
 
     // coefficient * product of factors. Factors are sorted by base in canonical order, with
     // distinct bases and nonzero exponents. A base that is a number, product or power appears
-    // only with a non-integer exponent, as in 2^(1/2). A sum with an integer exponent is
+    // only with a non-integer exponent, as in 2^(1/2); a rational base is an integer, raised to a
+    // rational exponent between 0 and 1 (see number_power). A sum with an integer exponent is
     // primitive (see split_content). At most one factor is an exponential, exp(u)^1. The
     // coefficient is nonzero, and there are at least two factors, or one factor and a
     // coefficient other than 1. A lone factor s^1 with s a sum does not occur: the coefficient

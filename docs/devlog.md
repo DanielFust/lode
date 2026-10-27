@@ -17,7 +17,8 @@ entry per stretch of work. Commits are named by their short hash.
 | 5b | `expand`, `collect` | Planned | |
 | — | Discussion: indexing (R6) | Done: convention settled (D27) | |
 | — | Published on GitHub, with continuous integration | Done (D28) | |
-| — | Discussion: tensor-valued domains and codomains of functions | Next | |
+| — | Discussion: tensor-valued domains and codomains of functions | Done: decided (D30) | |
+| 6 | Tensor container; functions indexed through `outputs()`; tensor-valued domains | Next | |
 | 3b | Parameters: inputs excluded from derivatives | Done | `743e2e2` |
 | — | Sparse Jacobians, written into MATL's `CSRMatrix` | After the indexing discussion | |
 | — | Discussion: the gradient of a vector of functions | After sparse Jacobians | |
@@ -114,8 +115,14 @@ against it.
 **D15. Testing strategy.** Besides specific cases, randomized tests build random expressions
 and check that algebraic laws hold *structurally* (commutativity, associativity, inverses,
 powers, exponentials), and that derivatives match complex-step values. Each randomized test is
-also run over 20 extra seeds before a phase is committed. Every phase builds warning-free on
-Clang and GCC and runs clean under the address and undefined-behaviour sanitizers.
+also run over extra seeds before a phase is committed (300 for the algebraic laws, since the
+first CI run showed that 20 missed rare cases). Every phase builds warning-free on Clang and GCC
+and runs clean under the address and undefined-behaviour sanitizers. *(Revised after the first
+CI run:)* the random generator draws directly from `std::mt19937`'s output, which the standard
+fixes, instead of the standard distributions, which differ between libraries, and never relies
+on the unspecified order of function arguments, so every platform tests the same expressions.
+Where a law's two sides contain a floating-point number (an exact result that overflowed 64
+bits, D7), they are compared in value at a few points instead of in structure.
 
 **D16. `Function` holds an array of outputs, compiled together.** A function has an ordered
 domain and outputs of any shape (scalar, vector, matrix, …), stored row-major. All outputs share
@@ -223,6 +230,27 @@ minutes). `.github/workflows/ci.yml` builds and runs every test and example on e
 `main` and each pull request: GCC 14 and Clang 18 on Linux, Apple Clang on macOS, Clang with
 the address and undefined-behaviour sanitizers, and a GCC Release build that also runs the
 benchmark.
+
+**D29. Powers of numbers have one form.** A rational number raised to a fractional power with
+no exact value is normalized: a fractional base is split into numerator and denominator, and
+the integer part of the exponent is taken out, leaving an exponent between 0 and 1
+(`2^(3/2) = 2*2^(1/2)`, `2^(-1/2) = 2^(1/2)/2`, `(2/3)^(1/2) = 2^(1/2)*3^(1/2)/3`). This is
+SymPy's rule. Without it, `(2^(-1/2))^3` and `2^(-1/2)*(2^(-1/2))^2` were equal numbers in
+different forms. Found by the extended seed sweep after the first CI run.
+
+**D30. Functions have tensor-valued outputs; tensors are indexed, functions are applied.**
+Decided with you after weighing both designs. A `Function` stays the compiled unit, with outputs
+of any shape compiled together, because sharing work between outputs (Jacobian entries above all)
+is LODE's main source of speed, and because a Jacobian needs one common domain. A matrix of
+separately compiled scalar functions would lose that sharing and repeat the domain in every
+entry. Components are reached through the outputs: `F.outputs()(i, j)` is an expression, indexed
+from 1 (D27), from which a new function can be built. Calling a function with numbers,
+`f(1.0, 2.0)`, stays the main use. To come: a `Tensor<T>` container (contiguous, any rank,
+`A(i, j, ...)` from 1 and `A[k]` from 0) for expressions, symbols and numeric results; `outputs()`
+returning a `Tensor<Expr>`; evaluation that can return a `Tensor<double>`; and domains shaped as
+tensors, for which `grad()` appends the domain's whole shape (a scalar energy of a 3x3 matrix
+variable has a 3x3 gradient). The gradient's derivative index comes last: J_ij = dF_i/dx_j.
+`Function::operator[]` is removed in favour of this.
 
 ## Log
 
@@ -442,7 +470,33 @@ benchmark.
 - Published the repository and added CI (D28). The first CI run's result is recorded below
   once it finishes.
 
+### 2026-10-27 — First CI run, and what it found
+
+- Of five CI jobs, GCC 14 on Linux and Apple Clang on macOS passed, and three failed:
+  - **GCC 14, Release:** a `-Wnonnull` warning (an error under `-Werror`), from copying zero
+    parameters out of a null pointer in `Program::run`. Harmless, but GCC 15 had not flagged it.
+    `run` with all inputs in one array no longer goes through that path.
+  - **Clang 18, Debug and sanitizers:** the randomized test of `pow(e, 2)*e == pow(e, 3)`
+    failed. It failed on Linux Clang but not elsewhere because the random expressions differed
+    by platform: the standard random distributions are implemented differently by libstdc++ and
+    libc++, and a fraction's numerator and denominator were drawn as two arguments of one call,
+    whose order of evaluation is unspecified.
+- Sweeping 300 seeds locally (I had swept 20) found occasional failures of three laws on both
+  compilers. Two causes: (1) exact rationals overflowing 64 bits into floating point, after which
+  results depend on rounding order (by design, D7; see Known limitations); (2) a real gap in the
+  canonical form, powers of numbers with fractional exponents (fixed by D29).
+- Fixes: D29; the random generator made identical on every platform, and the property test
+  compares in value where overflow made numbers inexact (D15). After them, all 300 seeds pass
+  on both compilers, and the derivative and compiled-function tests pass over 30 seeds each.
+- You decided the function design (D30), and are aligned on starting it.
+
 ## Known limitations
+
+- The algebraic laws hold exactly only while numbers stay exact: rationals have 64-bit parts,
+  and a result that overflows becomes a `double` (D7), after which equal values can differ in
+  their last digit. Arbitrary-precision integers would remove this; see Open questions.
+- Powers of different integers are not combined or split: `6^(1/2)` and `2^(1/2)*3^(1/2)` are
+  equal but have different forms (that would need integer factorization).
 
 - Constants are folded in real arithmetic, so when evaluating in complex numbers, `log(-1)` is
   NaN rather than iπ (the same in the interpreter and in generated code). Complex evaluation is
@@ -466,8 +520,8 @@ benchmark.
 
 ## Open questions for you
 
-- **Tensor-valued domains and codomains.** Should a `Function` keep outputs of any shape (one
-  compiled object, as now), and also accept variables arranged as a vector or matrix? Or should
-  functions be scalar, with vectors and matrices of functions held in a tensor container (as in
-  nablaxx)? This also settles what replaces `Function::operator[]` (D27) and what the gradient
-  of a vector of functions means.
+- **Arbitrary-precision numbers.** Exact rationals are limited to 64-bit parts (D7). Large
+  exponents, such as `(3/2)^81` from a reaction order or a high-degree polynomial, overflow into
+  floating point. Arbitrary-precision integers (as in SymPy and SymEngine) would keep them exact,
+  at some cost in speed when building expressions (not in evaluation, which is in `double`
+  anyway). Worth adding at some point, or is 64-bit exactness enough for your uses?

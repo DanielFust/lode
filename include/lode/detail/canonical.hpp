@@ -150,6 +150,7 @@ namespace lode
         Expr make_mul(std::vector<Expr> const& operands);
         Expr make_pow(Expr const& base, Expr const& exponent);
         Expr make_call(Elementary function, Expr const& argument);
+        Expr number_power(Number const& base, Number const& exponent);
 
         // Whether an expression is an exponential, exp(u)
         inline bool is_exp(Expr const& expr)
@@ -487,6 +488,43 @@ namespace lode
 
 
        /*-------------------------------------------------------------------------------------------
+        * Expr number_power(Number const& base, Number const& exponent)
+        *
+        * The canonical form of a rational number raised to a non-integer rational power that has
+        * no exact rational value, such as 2^(3/2). A fractional base is split into its numerator
+        * and denominator, and the integer part of the exponent is taken out, leaving an exponent
+        * between 0 and 1:
+        *
+        *     2^(3/2) = 2*2^(1/2),   2^(-1/2) = 2^(1/2)/2,   (2/3)^(1/2) = 2^(1/2)*3^(1/2)/3
+        *
+        * Without this, equal numbers had several forms: (2^(-1/2))^3 gave 2^(-3/2), while
+        * 2^(-1/2)*(2^(-1/2))^2 gave 2^(-1/2)/2.
+        *
+        * Parameters:
+        *     base        A rational number
+        *     exponent    A rational, not an integer
+        *-----------------------------------------------------------------------------------------*/
+        inline Expr number_power(Number const& base, Number const& exponent)
+        {
+            // (a/c)^r = a^r * c^(-r)
+            if (!base.is_integer())
+            {
+                Expr numerator   = make_pow(Expr(Number(base.numerator())), Expr(exponent));
+                Expr denominator = make_pow(Expr(Number(base.denominator())), Expr(-exponent));
+                return make_mul({numerator, denominator});
+            }
+
+            // m^r = m^w * m^(r - w), with w = floor(r)
+            std::int64_t p = exponent.numerator();
+            std::int64_t q = exponent.denominator();
+            std::int64_t w = p >= 0 ? p / q : -((-p + q - 1) / q);
+            Expr fraction = make_expr(PowData{Expr(base), Expr(exponent - Number(w))});
+            if (w == 0) return fraction;
+            return make_mul({Expr(exact_pow(base, Number(w)).value()), fraction});
+        }
+
+
+       /*-------------------------------------------------------------------------------------------
         * Expr make_pow(Expr const& base, Expr const& exponent)
         *
         * The canonical power base^exponent.
@@ -515,6 +553,8 @@ namespace lode
                 {
                     std::optional<Number> value = exact_pow(base.number(), n);
                     if (value) return Expr(*value);
+                    if (base.number().is_rational() && n.is_rational())
+                        return number_power(base.number(), n);
                     return make_expr(PowData{base, exponent});
                 }
 

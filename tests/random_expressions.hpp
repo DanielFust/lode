@@ -21,6 +21,12 @@ namespace lode::test
     *
     * Generates small random expressions in a few symbols, with exact coefficients, integer
     * exponents and (optionally) elementary functions, from a fixed seed so that failures repeat.
+    *
+    * The sequence is the same on every platform: random integers and reals are made directly
+    * from std::mt19937's output, which the standard specifies exactly, rather than with the
+    * standard distributions, which each library implements differently. Every random draw is a
+    * separate statement, since the order in which a function's arguments are evaluated is
+    * unspecified.
     *---------------------------------------------------------------------------------------------*/
     class RandomExpressions
     {
@@ -36,13 +42,19 @@ namespace lode::test
         // A random expression with at most the given depth of operations
         Expr next(int depth);
 
-        // A uniformly random integer in [low, high]
+        // A random integer in [low, high] (the slight bias of the remainder does not matter here)
         int uniform(int low, int high)
-        {return std::uniform_int_distribution<int>(low, high)(this->engine_);}
+        {
+            std::uint32_t span = static_cast<std::uint32_t>(high - low) + 1;
+            return low + static_cast<int>(this->engine_() % span);
+        }
 
-        // A uniformly random real in [low, high)
+        // A random real in [low, high)
         double uniform_real(double low, double high)
-        {return std::uniform_real_distribution<double>(low, high)(this->engine_);}
+        {
+            double fraction = static_cast<double>(this->engine_()) / 4294967296.0;
+            return low + (high - low) * fraction;
+        }
     };
 
 
@@ -62,7 +74,11 @@ namespace lode::test
                 case 0:
                     return Expr(this->uniform(-3, 3));
                 case 1:
-                    return Expr(Number(this->uniform(-3, 3), this->uniform(1, 4)));
+                {
+                    int numerator   = this->uniform(-3, 3);
+                    int denominator = this->uniform(1, 4);
+                    return Expr(Number(numerator, denominator));
+                }
                 default:
                     return this->symbols_[static_cast<std::size_t>(this->uniform(0, 2))];
             }

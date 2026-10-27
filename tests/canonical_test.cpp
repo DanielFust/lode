@@ -82,6 +82,16 @@ int main()
     LODE_CHECK_EQUAL(sqrt(Expr(2))*sqrt(Expr(2)), Expr(2));
     LODE_CHECK(sqrt(Expr(2)).is_pow());
 
+    // Powers of numbers take the integer part out of the exponent, so each has one form
+    Expr root2 = sqrt(Expr(2));
+    LODE_CHECK_EQUAL(pow(Expr(2), Number(3, 2)), 2*root2);
+    LODE_CHECK_EQUAL(pow(Expr(2), Number(-1, 2)), root2/2);
+    LODE_CHECK_EQUAL(pow(pow(Expr(2), Number(-1, 2)), 3), pow(Expr(2), Number(-1, 2))/2);
+    LODE_CHECK_EQUAL(sqrt(Expr(Number(2, 3))), root2*sqrt(Expr(3))/3);
+    LODE_CHECK_EQUAL(pow(Expr(-1), Number(3, 2)), -sqrt(Expr(-1)));
+    LODE_CHECK_EQUAL(root2*pow(Expr(2), Number(3, 4)), 2*pow(Expr(2), Number(1, 4)));
+    LODE_CHECK_EQUAL(pow(Expr(8), Number(3, 2)), 8*sqrt(Expr(8)));
+
     // Rational coefficients are exact
     LODE_CHECK_EQUAL(x/2 + x/3, 5*x/6);
     LODE_CHECK_EQUAL(Expr(1)/3 + Expr(1)/6, Expr(Number(1, 2)));
