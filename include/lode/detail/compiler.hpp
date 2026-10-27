@@ -30,6 +30,20 @@ namespace lode::detail
         std::uint32_t value;      // Index of the computed value (before register allocation)
     };
 
+    // A lowered program: instructions in static single assignment form, before registers are
+    // assigned. Values 0 to input_count - 1 are the inputs; every other value is the result of
+    // exactly one instruction, which comes before any instruction that reads it.
+    struct Lowered
+    {
+        std::size_t              input_count;
+        std::size_t              output_count;
+        std::uint32_t            value_count;
+        std::vector<Instruction> code;
+    };
+
+    // Assigns registers to a lowered program
+    std::shared_ptr<Program const> allocate_registers(Lowered const& lowered);
+
     // Hash and equality of expressions, for maps keyed by structure rather than by node
     struct ExprHash
     {
@@ -96,8 +110,13 @@ namespace lode::detail
         // std::invalid_argument if a variable appears twice among them
         Compiler(std::vector<Symbol> const& domain, std::vector<Symbol> const& parameters);
 
-        // Compiles the outputs; throws std::invalid_argument for a variable not in the domain
-        std::shared_ptr<Program const> compile(std::vector<Expr> const& outputs);
+        // Lowers the outputs to instructions, without unused ones; throws std::invalid_argument
+        // for a variable that is not an input. A compiler lowers one set of outputs.
+        Lowered lower_outputs(std::vector<Expr> const& outputs);
+
+        // Lowers the outputs and assigns registers
+        std::shared_ptr<Program const> compile(std::vector<Expr> const& outputs)
+        {return allocate_registers(this->lower_outputs(outputs));}
 
       private:
         static Operand constant(double value) {return Operand{true, value, 0};}
@@ -121,8 +140,6 @@ namespace lode::detail
         Operand lower_new(Expr const& expr);
         Operand lower_product(Number const& coefficient, std::vector<Factor> const& factors);
 
-        // Assigns registers and builds the program
-        std::shared_ptr<Program const> allocate_registers(std::size_t output_count);
     };
 
 
@@ -162,11 +179,13 @@ namespace lode::detail
 
 
    /*-----------------------------------------------------------------------------------------------
-    * std::shared_ptr<Program const> Compiler::compile(std::vector<Expr> const& outputs)
+    * Lowered Compiler::lower_outputs(std::vector<Expr> const& outputs)
     *
-    * Lowers each output and stores it, then assigns registers.
+    * Lowers each output and stores it, then removes instructions whose results are never read
+    * (constant folding can leave some behind). A single backward pass finds them, because in
+    * single assignment form every value is defined before it is read.
     *---------------------------------------------------------------------------------------------*/
-    inline std::shared_ptr<Program const> Compiler::compile(std::vector<Expr> const& outputs)
+    inline Lowered Compiler::lower_outputs(std::vector<Expr> const& outputs)
     {
         for (std::size_t j = 0; j < outputs.size(); ++j)
         {
@@ -177,7 +196,23 @@ namespace lode::detail
             else
                 this->code_.push_back(Instruction{Op::Store, 0, result.value, index, 0.0});
         }
-        return this->allocate_registers(outputs.size());
+
+        // Keep the stores, and every instruction whose result a kept instruction reads
+        std::vector<bool> needed(this->value_count_, false);
+        std::vector<bool> keep(this->code_.size(), false);
+        for (std::size_t k = this->code_.size(); k-- > 0;)
+        {
+            Instruction const& in = this->code_[k];
+            keep[k] = !has_result(in.op) || needed[in.result];
+            if (!keep[k]) continue;
+            if (reads_a(in.op)) needed[in.a] = true;
+            if (reads_b(in.op)) needed[in.b] = true;
+        }
+
+        Lowered lowered{this->input_count_, outputs.size(), this->value_count_, {}};
+        for (std::size_t k = 0; k < this->code_.size(); ++k)
+            if (keep[k]) lowered.code.push_back(this->code_[k]);
+        return lowered;
     }
 
 
@@ -457,7 +492,7 @@ namespace lode::detail
 
 
    /*-----------------------------------------------------------------------------------------------
-    * std::shared_ptr<Program const> Compiler::allocate_registers(std::size_t output_count)
+    * std::shared_ptr<Program const> allocate_registers(Lowered const& lowered)
     *
     * Maps values to registers. Inputs start in registers 0 to input_count - 1. Walking the
     * instructions in order, a register is freed after the last instruction that reads its value,
@@ -465,33 +500,33 @@ namespace lode::detail
     * with one of its own operands, which is safe because every operation reads its operands
     * before writing its result, point by point.
     *---------------------------------------------------------------------------------------------*/
-    inline std::shared_ptr<Program const> Compiler::allocate_registers(std::size_t output_count)
+    inline std::shared_ptr<Program const> allocate_registers(Lowered const& lowered)
     {
         std::size_t const NONE = std::numeric_limits<std::size_t>::max();
 
         // Last instruction reading each value
-        std::vector<std::size_t> last_use(this->value_count_, NONE);
-        for (std::size_t k = 0; k < this->code_.size(); ++k)
+        std::vector<std::size_t> last_use(lowered.value_count, NONE);
+        for (std::size_t k = 0; k < lowered.code.size(); ++k)
         {
-            Instruction const& in = this->code_[k];
+            Instruction const& in = lowered.code[k];
             if (reads_a(in.op)) last_use[in.a] = k;
             if (reads_b(in.op)) last_use[in.b] = k;
         }
 
-        std::vector<std::uint32_t> location(this->value_count_, 0);
+        std::vector<std::uint32_t> location(lowered.value_count, 0);
         std::vector<std::uint32_t> free_registers;
-        std::uint32_t register_count = static_cast<std::uint32_t>(this->input_count_);
-        for (std::uint32_t i = 0; i < this->input_count_; ++i)
+        std::uint32_t register_count = static_cast<std::uint32_t>(lowered.input_count);
+        for (std::uint32_t i = 0; i < lowered.input_count; ++i)
         {
             location[i] = i;
             if (last_use[i] == NONE) free_registers.push_back(i);
         }
 
         std::vector<Instruction> program;
-        program.reserve(this->code_.size());
-        for (std::size_t k = 0; k < this->code_.size(); ++k)
+        program.reserve(lowered.code.size());
+        for (std::size_t k = 0; k < lowered.code.size(); ++k)
         {
-            Instruction in = this->code_[k];
+            Instruction in = lowered.code[k];
             bool        read_a = reads_a(in.op);
             bool        read_b = reads_b(in.op);
             std::uint32_t value_a = in.a;
@@ -521,8 +556,8 @@ namespace lode::detail
             }
             program.push_back(in);
         }
-        return std::make_shared<Program const>(this->input_count_, output_count, register_count,
-                                               std::move(program));
+        return std::make_shared<Program const>(lowered.input_count, lowered.output_count,
+                                               register_count, std::move(program));
     }
 }
 #endif

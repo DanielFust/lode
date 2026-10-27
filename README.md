@@ -67,6 +67,21 @@ jac.evaluate(state, parameter_values, J);    // T, A, Ea given at each call
 lode::Function jac_T = jac.partial({{A, 1e7}, {Ea, 5e4}});   // fold the constants, keep T
 ```
 
+For the fastest evaluation, LODE can write a function as C++ source, to compile into your
+program. The generated header is self-contained: it needs no LODE at run time.
+
+```cpp
+#include "lode/codegen.hpp"
+lode::write_cpp(jacobian, "robertson_jacobian", "generated/robertson_jacobian.hpp");
+
+// in your program, built with the generated header:
+#include "robertson_jacobian.hpp"
+robertson_jacobian(state.data(), rate_constants.data(), J.data());   // plain C++, takes pointers
+```
+
+How the evaluation is made fast is explained, with examples, in
+[docs/optimizations.md](docs/optimizations.md).
+
 ## Examples
 
 [`examples/`](examples) has short, annotated programs: expressions and simplification,
@@ -105,7 +120,8 @@ evaluation, and an application to stiff chemical kinetics. See
 3. `Function` with fast compiled evaluation (including batches of points), gradient,
    Jacobian, Hessian, and partial evaluation. *(Done.)*
 4. Examples of usage and core features, and a stiff chemical kinetics application. *(Done.)*
-5. Later: expand, collect, and C++ code generation.
+5. C++ code generation *(done)*; `expand` and `collect`.
+6. Sparse Jacobians, and a tensor container for results.
 
 ## Building
 

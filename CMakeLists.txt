@@ -40,9 +40,22 @@ endif()
 # Benchmarks build on request; time them in a Release build.
 option(LODE_BUILD_BENCHMARKS "Build the LODE benchmarks" OFF)
 if (LODE_BUILD_BENCHMARKS)
-    add_executable(lode_benchmark bench/benchmark.cpp)
+    # The benchmark compares against C++ code that LODE generates during the build
+    add_executable(lode_generate_benchmark_code bench/generate_benchmark_code.cpp)
+    target_link_libraries(lode_generate_benchmark_code PRIVATE lode::lode)
+
+    set(LODE_BENCHMARK_GENERATED ${CMAKE_CURRENT_BINARY_DIR}/bench/benchmark_generated.hpp)
+    add_custom_command(
+        OUTPUT ${LODE_BENCHMARK_GENERATED}
+        COMMAND lode_generate_benchmark_code ${LODE_BENCHMARK_GENERATED}
+        DEPENDS lode_generate_benchmark_code
+        COMMENT "Generating C++ code for the benchmark")
+
+    add_executable(lode_benchmark bench/benchmark.cpp ${LODE_BENCHMARK_GENERATED})
     target_link_libraries(lode_benchmark PRIVATE lode::lode)
+    target_include_directories(lode_benchmark PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/bench)
     if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(lode_generate_benchmark_code PRIVATE -Wall -Wextra -Werror)
         target_compile_options(lode_benchmark PRIVATE -Wall -Wextra -Werror)
     endif()
 endif()

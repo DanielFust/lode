@@ -1,0 +1,83 @@
+/*--------------------------------------------------------------------------------------------------
+ * File: codegen_cases.hpp
+ *
+ * Description: The functions whose generated C++ code is tested. The generator program and the
+ *              test both build them, in the same way, so that the test can compare the compiled
+ *              generated code with LODE's interpreter on the same functions.
+ *------------------------------------------------------------------------------------------------*/
+#ifndef LODE_TESTS_CODEGEN_CASES_HPP
+#define LODE_TESTS_CODEGEN_CASES_HPP
+
+#include <string>
+#include <vector>
+
+#include "lode/lode.hpp"
+#include "random_expressions.hpp"
+
+namespace lode::test
+{
+    // A function and the name its generated code is given
+    struct CodegenCase
+    {
+        std::string name;
+        Function    function;
+    };
+
+
+   /*-----------------------------------------------------------------------------------------------
+    * std::vector<CodegenCase> codegen_cases()
+    *
+    * Builds the test functions: Robertson's kinetics with parameters, edge cases (a constant
+    * function, unused inputs, special functions, awkward variable names), and random functions
+    * with their Jacobians.
+    *---------------------------------------------------------------------------------------------*/
+    inline std::vector<CodegenCase> codegen_cases()
+    {
+        std::vector<CodegenCase> cases;
+
+        // Robertson's kinetics, with the rate constants as parameters
+        Symbol y1("y1");
+        Symbol y2("y2");
+        Symbol y3("y3");
+        Symbol k1("k1");
+        Symbol k2("k2");
+        Symbol k3("k3");
+        Function rhs({y1, y2, y3},
+                     {-k1*y1 + k3*y2*y3, k1*y1 - k3*y2*y3 - k2*pow(y2, 2), k2*pow(y2, 2)},
+                     {k1, k2, k3});
+        cases.push_back({"robertson_rhs", rhs});
+        cases.push_back({"robertson_jacobian", rhs.grad()});
+
+        // Edge cases
+        Symbol x("x");
+        Symbol y("y");
+        Symbol z("z");
+        cases.push_back({"constant", Function({x}, Expr(7))});
+        cases.push_back({"ignores_y", Function({x, y}, 2*x)});
+        cases.push_back({"special", Function({x, y}, {pow(x, y), pow(Expr(2), x), pow(x, Number(3, 2)),
+                                                      pow(x, Number(-5, 2)), pow(x, Number(1, 3)),
+                                                      log(x)*cos(y)/sin(x + 1), exp(-x)*1e300})});
+
+        // Variable names that are C++ keywords, look like generated names, repeat, or are not
+        // identifiers
+        Symbol keyword("double");
+        Symbol generated("v0");
+        Symbol first_a("a");
+        Symbol second_a("a");
+        Symbol primed("x'");
+        Expr awkward = keyword*generated + first_a - 2*second_a + primed;
+        std::vector<Symbol> awkward_domain{keyword, generated, first_a, second_a, primed};
+        cases.push_back({"awkward_names", Function(awkward_domain, awkward)});
+
+        // Random vector functions and their Jacobians
+        RandomExpressions random(20261027, {x, y, z}, true);
+        for (int i = 0; i < 60; ++i)
+        {
+            Function f({x, y, z}, std::vector<Expr>{random.next(3), random.next(3)});
+            cases.push_back({"random_" + std::to_string(i), f});
+            cases.push_back({"random_" + std::to_string(i) + "_jacobian", f.grad()});
+        }
+        return cases;
+    }
+}
+#endif

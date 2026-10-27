@@ -22,3 +22,27 @@ foreach (test_name IN LISTS LODE_TESTS)
     endif()
     add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach()
+
+# Code generation: a generator program writes C++ code for the test functions during the build,
+# and codegen_test compiles that code and checks it against the interpreter
+add_executable(codegen_generator codegen_generator.cpp)
+target_link_libraries(codegen_generator PRIVATE lode::lode)
+target_include_directories(codegen_generator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+set(LODE_GENERATED_CASES ${CMAKE_CURRENT_BINARY_DIR}/generated/generated_cases.hpp)
+add_custom_command(
+    OUTPUT ${LODE_GENERATED_CASES}
+    COMMAND codegen_generator ${LODE_GENERATED_CASES}
+    DEPENDS codegen_generator
+    COMMENT "Generating C++ code for the code generation test")
+
+add_executable(codegen_test codegen_test.cpp ${LODE_GENERATED_CASES})
+target_link_libraries(codegen_test PRIVATE lode::lode)
+target_include_directories(codegen_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                                                ${CMAKE_CURRENT_BINARY_DIR}/generated)
+add_test(NAME codegen_test COMMAND codegen_test)
+
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(codegen_generator PRIVATE -Wall -Wextra -Werror)
+    target_compile_options(codegen_test PRIVATE -Wall -Wextra -Werror)
+endif()

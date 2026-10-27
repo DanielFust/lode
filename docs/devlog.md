@@ -12,10 +12,14 @@ entry per stretch of work. Commits are named by their short hash.
 | 1 | Expression core: numbers, symbols, sums, products, powers in canonical form | Done | `a55ce30` |
 | 2 | Differentiation, substitution, `exp` `log` `sin` `cos`, reference evaluator | Done | `0838c4e` |
 | 3 | `Function`: compiled fast evaluation, batches, gradient/Jacobian/Hessian, partial evaluation | Done | `0e09903` |
-| 4 | Examples of usage and core features; chemical kinetics application | Done | *Add examples* |
-| 5 | `expand`, `collect`, C++ code generation | Planned | |
+| 4 | Examples of usage and core features; chemical kinetics application | Done | `83b8218` |
+| 5a | C++ code generation | Done | *Add C++ code generation* |
+| 5b | `expand`, `collect` | Planned | |
+| — | Discussion: indexing (R6) | Next | |
 | 3b | Parameters: inputs excluded from derivatives | Done | `743e2e2` |
-| — | Sparse Jacobians, written into MATL's `CSRMatrix` | Planned (you agreed) | |
+| — | Sparse Jacobians, written into MATL's `CSRMatrix` | After the indexing discussion | |
+| — | Discussion: the gradient of a vector of functions | After sparse Jacobians | |
+| — | Continuous integration on GitHub Actions | After 1 November (Actions minutes) | |
 | — | A tensor container wrapping contiguous results, of any rank | Planned | |
 
 ## Requirements from you
@@ -179,6 +183,23 @@ compatibility first: spans let LODE write into a `std::vector`, `std::array`, MA
 another library's arrays without copying. A tensor container that wraps contiguous results and
 indexes them with any rank, as nablaxx's `Tensor` was meant to, will follow. MATL adapters
 (dense `Matrix`, sparse `CSRMatrix`) remain possible on top.
+
+**D25. Code generation writes the optimized program as plain C++.** `generate_cpp(function,
+name)` returns a self-contained header (it needs no LODE at run time) that defines, as templates
+on the number type, `name(point[, parameters], outputs)`, `name(inputs, outputs)` when there are
+parameters, and `name_batch(...)`. The body is the compiler's single-assignment program, one
+`T const` variable per value, so every optimization of D17 is kept and the C++ compiler assigns
+machine registers itself. Inputs are named after their variables where those are usable C++
+identifiers (otherwise `input_k`), distinct constants are named once (`c0`, `c1`, …), and the
+generated code compiles warning-free under `-Wall -Wextra -Werror`. The intended workflow
+generates code during the build: a small program builds the functions and calls `write_cpp`, a
+CMake custom command runs it, and the program that needs the functions compiles the header.
+LODE's own tests and benchmark use exactly this workflow.
+
+**D26. Lowering and register assignment are separate steps.** `Compiler::lower_outputs` produces
+the single-assignment program, now with unused instructions removed (dead code elimination);
+`allocate_registers` turns it into an interpreter `Program`. Code generation uses the first step
+only.
 
 ## Log
 
@@ -352,7 +373,47 @@ indexes them with any rank, as nablaxx's `Tensor` was meant to, will follow. MAT
 - Writing the examples turned up one compiler improvement: a sum now starts from a term with
   coefficient 1, so `x*z - y` compiles to one subtraction instead of a negation and an addition.
 
+### 2026-10-27 — Phase 5a: C++ code generation, and an explainer
+
+- `include/lode/codegen.hpp`: `generate_cpp` and `write_cpp` (D25), on top of the separated
+  lowering step (D26). See the README for the workflow.
+- Tests: a generator program (`tests/codegen_generator.cpp`) writes code for 129 functions
+  during the build (Robertson with parameters, edge cases such as a constant function, unused
+  inputs, special powers, and variables named `double`, `v0`, `a` twice and `x'`, plus 60 random
+  functions and their Jacobians: 6,700 lines). `codegen_test` compiles it with warnings as errors
+  and checks it against the interpreter in double and complex arithmetic and in batches, and
+  checks the generated text and the errors for unusable names.
+- Found and fixed a bug while testing: NaN and infinity constants were written as
+  `std::numeric_limits<T>::...`, which is not defined for `std::complex` and silently gives 0.
+  They are now built from `double` and converted, as the interpreter does.
+- Benchmark (Release, Apple Clang 21), nanoseconds per point, now with generated code:
+
+  | Function | Interpreter | Batch | Generated | Hand-written |
+  | --- | ---: | ---: | ---: | ---: |
+  | Robertson right-hand side | 32 | 11.4 | 4.7 | 5.8 |
+  | Robertson Jacobian (3×3) | 43 | 11.0 | 5.7 | 6.7 |
+  | Network right-hand side (30) | 278 | 99 | 26 | |
+  | Network Jacobian (30×30) | 3,190 | 827 | 486 | |
+  | Triangle P2 shape functions | 53 | 15.8 | 4.9 | 5.1 |
+  | Triangle P2 gradients | 57 | 17.6 | 6.4 | 6.4 |
+
+  Generated code is as fast as hand-written code, which was the goal of R1. The network Jacobian
+  is limited by writing 900 mostly-zero entries; sparse Jacobians will address that.
+- You asked for a document explaining the optimizations, for your own learning:
+  [optimizations.md](optimizations.md) walks through each one with real listings from LODE,
+  explains interpreter dispatch, batches, code generation and the testing techniques, and lists
+  further reading. Writing it, I corrected one claim of my own: repeated squaring is faster than
+  `std::pow` but can be slightly *less* accurate for large exponents, not more.
+- Queue agreed with you: the indexing discussion, then sparse Jacobians, then a discussion of
+  what the gradient of a vector of functions should be (the question that originally led you to
+  write nablaxx's Tensor). CI waits for your Actions minutes to reset on 1 November, unless the
+  repository is public, in which case GitHub-hosted runners cost no minutes.
+
 ## Known limitations
+
+- Constants are folded in real arithmetic, so when evaluating in complex numbers, `log(-1)` is
+  NaN rather than iπ (the same in the interpreter and in generated code). Complex evaluation is
+  meant for complex-step derivatives of real functions, where this does not matter.
 
 - The interpreter is 1.1–3.2× slower than hand-written C++ in batch mode, and 3–10× slower one
   point at a time (see the phase 3 benchmark). C++ code generation is planned (phase 5).
@@ -374,6 +435,9 @@ indexes them with any rank, as nablaxx's `Tensor` was meant to, will follow. MAT
 
 - **Indexing in LODE (R6).** Which LODE objects are mathematical (1-based) and which are
   arrays (0-based)? Candidates: `Function::operator[]` over outputs, and the future tensor
-  container.
-- **GitHub.** The repository is local only. Say when you want it pushed, and whether public or
-  private.
+  container. Next on the queue.
+- **The gradient of a vector of functions.** Today `grad()` appends a dimension, so the
+  gradient of a vector function is its Jacobian matrix, and of a matrix function a rank-3
+  array. Should this be allowed, and what should it mean? To discuss after sparse Jacobians.
+- **GitHub.** The repository is local only. Pushing it, public or private, also decides how CI
+  is paid for: public repositories use GitHub-hosted runners without consuming Actions minutes.
