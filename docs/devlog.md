@@ -12,15 +12,16 @@ entry per stretch of work. Commits are named by their short hash.
 | 1 | Expression core: numbers, symbols, sums, products, powers in canonical form | Done | `a55ce30` |
 | 2 | Differentiation, substitution, `exp` `log` `sin` `cos`, reference evaluator | Done | `0838c4e` |
 | 3 | `Function`: compiled fast evaluation, batches, gradient/Jacobian/Hessian, partial evaluation | Done | `0e09903` |
+| 3b | Parameters: inputs excluded from derivatives | Done | `743e2e2` |
 | 4 | Examples of usage and core features; chemical kinetics application | Done | `83b8218` |
 | 5a | C++ code generation | Done | `be59a87` |
 | 5b | `expand`, `collect` | Planned | |
 | — | Discussion: indexing (R6) | Done: convention settled (D27) | |
 | — | Published on GitHub, with continuous integration | Done (D28) | |
 | — | Discussion: tensor-valued domains and codomains of functions | Done: decided (D30) | |
-| 6 | Tensor container; functions indexed through `outputs()`; tensor-valued domains | Done | *Add Tensor* |
-| 3b | Parameters: inputs excluded from derivatives | Done | `743e2e2` |
-| — | Sparse Jacobians, written into MATL's `CSRMatrix` | Next | |
+| 6 | Tensor container; functions indexed through `outputs()`; tensor-valued domains | Done | `037e94b` |
+| 7 | Sparse Jacobians, with MATL interoperability | Done | *Add sparse Jacobians* |
+| — | Arbitrary-precision exact numbers (agreed, D33) | Later, before high-order uses | |
 | — | A tensor container wrapping contiguous results, of any rank | Planned | |
 
 ## Requirements from you
@@ -272,6 +273,29 @@ folded constants only where they happened to be adjacent, so `x*(3/2)^20*e*sqrt(
 multiplications. It now multiplies all constant factors into one number (including a product's
 share of its sum term's coefficient, which still uses a multiply-add) and adds all constant
 terms once. Found while answering your question about exact numbers and evaluation speed.
+
+**D33. Exact numbers stay exact; overflow will be promoted to arbitrary precision.** Agreed
+with you: keep numbers exact (free at evaluation, D32, and needed for terms to cancel), and,
+before high-order derivatives or high-degree polynomials become a use case, promote results
+that outgrow 64 bits to arbitrary-precision integers instead of `double`.
+
+**D34. Sparse matrix functions.** `SparseMatrixFunction` stores a matrix-valued function by its
+nonzero entries: the pattern in compressed sparse row form (`row_offsets`, `column_indices`,
+counted from 0 as storage offsets, D27), and the entries' values as an ordinary vector
+`Function`, `values()`, so evaluation, batches, parameters and code generation all work on it
+unchanged. `entry(i, j)` gives an entry as an expression, counted from 1. `F.sparse_jacobian()`
+differentiates each output only with respect to the variables that appear in it, and drops
+derivatives that simplify to zero, so the pattern is exact and a large system never builds its
+dense Jacobian. `SparseMatrixFunction(F)` makes any matrix-valued function sparse.
+`generate_cpp(sparse, name)` writes the values like any function plus the pattern as
+`constexpr std::array`s, so a program can set up its sparse matrix without LODE.
+
+**D35. MATL interoperability is optional.** `include/lode/matl.hpp` (included only by programs
+that use MATL) provides `csr_matrix(sparse)`, a MATL `CSRMatrix` with the same pattern into
+whose `values()` LODE evaluates in place (both libraries use 0-based CSR arrays and 1-based
+entries), and `evaluate(matrix_function, inputs, matl_matrix)` for dense matrices (both
+row-major). LODE does not depend on MATL. With `-DLODE_WITH_MATL=ON`, CMake uses an installed
+MATL or fetches v2.2.0 from GitHub and builds `matl_test`; a sixth CI job does this.
 
 ## Log
 
@@ -549,6 +573,23 @@ terms once. Found while answering your question about exact numbers and evaluati
     and large exponents in rate laws.
   - My recommendation is in Open questions.
 
+### 2026-10-27 — Phase 7: sparse Jacobians and MATL
+
+- You agreed on exact numbers (D33). Sparse Jacobians: D34; MATL interoperability: D35.
+- Robertson's Jacobian stores 7 of 9 entries; the 30-species benchmark network 132 of 900.
+  Benchmark (Release, Apple Clang 21, nanoseconds per point), dense versus sparse network
+  Jacobian: interpreter 2,882 versus 507, batch 689 versus 178, generated code 448 versus 77.
+- Tests: `tests/sparse_test.cpp` (the pattern, values against the dense Jacobian, construction
+  from a dense matrix function, a 200-species chain, a one-row Jacobian, exact cancellation, 200
+  random functions, and errors); the code generation test now also generates sparse Jacobians
+  and checks the generated pattern arrays and values; `tests/matl_test.cpp` (built with MATL)
+  writes a sparse Jacobian into a MATL `CSRMatrix`, compares it with a dense MATL matrix, and
+  multiplies it by a vector with MATL.
+- Example 11 (`examples/11_sparse_jacobians.cpp`): a chain of reversible reactions with a
+  tridiagonal Jacobian. The explainer gained a section on sparsity.
+- Also fixed on the way: a GCC 15 warning about a temporary in the constant-folding change, by
+  naming the factor list (a false positive, but the code is clearer).
+
 ## Known limitations
 
 - `shape()`, `outputs()` and `domain()` return references into the function. Looping over one
@@ -584,12 +625,4 @@ terms once. Found while answering your question about exact numbers and evaluati
 
 ## Open questions for you
 
-- **Arbitrary-precision numbers.** Recommendation: keep numbers exact, as now, and when an exact
-  result outgrows 64 bits, promote it to an arbitrary-precision integer instead of a `double`.
-  Small numbers would keep today's fast path, so the cost is paid only when numbers are large,
-  and only when building expressions: evaluation is unaffected (D32). Users who want
-  floating-point constants can already write them as such (`2.5`), and a function
-  `approximate(expr)` that turns every exact constant into a `double` (like SymPy's `evalf`)
-  would make that explicit. Not urgent; worth doing before high-order derivatives or
-  high-degree polynomials become a use case. Header-only, with no dependency (our own integer
-  type), to suit HPC systems.
+None at the moment.

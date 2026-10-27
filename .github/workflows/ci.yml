@@ -1,6 +1,7 @@
 # Builds LODE and runs its tests and examples on every push to main and every pull request:
 # with GCC and Clang on Linux, Apple Clang on macOS, under the address and undefined-behaviour
-# sanitizers, and as a Release build that also runs the benchmark.
+# sanitizers, as a Release build that also runs the benchmark, and with MATL (fetched from
+# GitHub) to test the MATL interoperability.
 name: CI
 
 on:
@@ -34,6 +35,10 @@ jobs:
             cxx: g++-14
             build_type: Release
             benchmarks: "ON"
+          - name: Linux, GCC 14, with MATL
+            os: ubuntu-24.04
+            cxx: g++-14
+            matl: "ON"
 
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +50,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type || 'Debug' }}
           -DCMAKE_CXX_FLAGS="${{ matrix.flags }}"
           -DLODE_BUILD_BENCHMARKS=${{ matrix.benchmarks || 'OFF' }}
+          -DLODE_WITH_MATL=${{ matrix.matl || 'OFF' }}
 
       - name: Build
         run: cmake --build build --parallel

@@ -29,6 +29,8 @@ int main(int argc, char** argv)
         std::string source;
         for (lode::test::CodegenCase const& c : cases)
             source += lode::generate_cpp(c.function, c.name) + "\n";
+        for (lode::test::SparseCodegenCase const& c : lode::test::sparse_codegen_cases())
+            source += lode::generate_cpp(c.matrix, c.name) + "\n";
 
         // Test scaffolding: call the generated functions by case number
         source += "template<class T>\n"

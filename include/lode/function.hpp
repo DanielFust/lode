@@ -28,6 +28,9 @@
 
 namespace lode
 {
+    class SparseMatrixFunction;
+
+
    /*-----------------------------------------------------------------------------------------------
     * class Parameters
     *
@@ -225,6 +228,10 @@ namespace lode
 
         // The second derivatives: grad().grad(), the Hessian matrix of a scalar function
         Function hessian() const {return this->grad().grad();}
+
+        // The Jacobian of a scalar or vector function as a sparse matrix function, computing only
+        // the derivatives that are not identically zero (see SparseMatrixFunction)
+        SparseMatrixFunction sparse_jacobian() const;
 
       private:
         // Compiles the outputs
@@ -636,4 +643,8 @@ namespace lode
                         Parameters(this->parameters_));
     }
 }
+
+// Sparse matrix functions, which Function::sparse_jacobian returns
+#include "lode/sparse.hpp"
+
 #endif

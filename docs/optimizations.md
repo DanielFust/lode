@@ -231,7 +231,24 @@ computes each shared subexpression once by construction (in the Robertson right-
 `k3*y2*y3` and `y2^2` each appear in two formulas), while hand-written code relies on the C++
 compiler to notice the repeats.
 
-## 10. How the optimizations are checked
+## 10. Sparsity: do not compute zeros
+
+In large systems, each equation involves only a few variables, so most Jacobian entries are zero.
+`sparse_jacobian()` finds the nonzero entries *symbolically*, once: each output is differentiated
+only with respect to the variables that appear in it, and a derivative that simplifies to exactly
+zero is dropped. Canonical form makes "exactly zero" a reliable test (`y1*y2 - y2*y1` is `0`),
+so the pattern is exact rather than an over-estimate. The nonzero entries become an ordinary
+vector function, compiled with all the optimizations above, and the pattern is stored in
+compressed sparse row (CSR) form, the format sparse linear solvers expect. For the 30-species
+network in the benchmark, 132 of the Jacobian's 900 entries are nonzero, and every way of
+evaluating it gets about 4–6× faster:
+
+| Network Jacobian | Interpreter | Batch | Generated |
+| --- | ---: | ---: | ---: |
+| Dense (900 entries, 1,021 instructions) | 2,882 | 689 | 448 |
+| Sparse (132 entries, 253 instructions) | 507 | 178 | 77 |
+
+## 11. How the optimizations are checked
 
 Optimizations are only useful if they keep the results right. Three techniques do the checking:
 

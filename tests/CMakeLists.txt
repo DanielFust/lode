@@ -12,6 +12,7 @@ set(LODE_TESTS
     function_test
     parameters_test
     tensor_test
+    sparse_test
 )
 
 foreach (test_name IN LISTS LODE_TESTS)
@@ -46,4 +47,15 @@ add_test(NAME codegen_test COMMAND codegen_test)
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(codegen_generator PRIVATE -Wall -Wextra -Werror)
     target_compile_options(codegen_test PRIVATE -Wall -Wextra -Werror)
+endif()
+
+# MATL interoperability, when enabled
+if (LODE_WITH_MATL)
+    add_executable(matl_test matl_test.cpp)
+    target_link_libraries(matl_test PRIVATE lode::lode matl::matl)
+    target_include_directories(matl_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(matl_test PRIVATE -Wall -Wextra -Werror)
+    endif()
+    add_test(NAME matl_test COMMAND matl_test)
 endif()

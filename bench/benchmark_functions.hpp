@@ -86,6 +86,8 @@ namespace lode::bench
                 {"Robertson Jacobian (3x3)", "robertson_jacobian", robertson.grad(), state},
                 {"Network right-hand side (30)", "network_rhs", network, concentrations},
                 {"Network Jacobian (30x30)", "network_jacobian", network.grad(), concentrations},
+                {"Network Jacobian, sparse (132)", "network_sparse_jacobian",
+                 network.sparse_jacobian().values(), concentrations},
                 {"Triangle P2 shape functions (6)", "triangle_shape", shape, quadrature_point},
                 {"Triangle P2 gradients (6x2)", "triangle_gradients", shape.grad(), quadrature_point}};
     }

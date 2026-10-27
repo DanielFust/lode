@@ -32,9 +32,15 @@ namespace lode
     // a valid C++ identifier.
     std::string generate_cpp(Function const& function, std::string const& name);
 
+    // The C++ source of a header that defines a sparse matrix function's nonzero entries, like
+    // generate_cpp for its values(), together with its sparsity pattern as constant arrays
+    std::string generate_cpp(SparseMatrixFunction const& matrix, std::string const& name);
+
     // Writes generate_cpp(function, name) to a file, creating its directory if needed. Throws
     // std::runtime_error if the file cannot be written.
     void write_cpp(Function const& function, std::string const& name,
+                   std::filesystem::path const& path);
+    void write_cpp(SparseMatrixFunction const& matrix, std::string const& name,
                    std::filesystem::path const& path);
 
 
@@ -284,6 +290,22 @@ namespace lode
             return text + line;
         }
 
+        // The generated header for a function (see generate_cpp), with a description of its
+        // outputs for the header comment ("" for their number and shape) and further
+        // declarations to place at its end
+        std::string generate_header(Function const& function, std::string const& name,
+                                    std::string const& outputs, std::string const& footer);
+
+        // Writes text to a file, creating its directory if needed; throws std::runtime_error if
+        // the file cannot be written
+        inline void write_text(std::string const& text, std::filesystem::path const& path)
+        {
+            if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path());
+            std::ofstream file(path);
+            file << text;
+            if (!file) throw std::runtime_error("write_cpp: could not write " + path.string());
+        }
+
         // "y1, y2, y3": names of a list of variables, for comments
         inline std::string name_list(std::vector<Symbol> const& variables)
         {
@@ -296,7 +318,8 @@ namespace lode
 
 
    /*-----------------------------------------------------------------------------------------------
-    * std::string generate_cpp(Function const& function, std::string const& name)
+    * std::string detail::generate_header(Function const& function, std::string const& name,
+    *                                     std::string const& outputs, std::string const& footer)
     *
     * The C++ source of a self-contained header defining the function. For a function `name` of
     * n variables, m parameters and k outputs it defines, as templates on the number type T:
@@ -318,11 +341,15 @@ namespace lode
     * Parameters:
     *     function    Function to generate
     *     name        Name of the generated function (a C++ identifier)
+    *     outputs     Description of the outputs for the header comment; "" for their number and
+    *                 shape
+    *     footer      Further declarations to place at the end of the header
     *
     * Returns:
     *     The header's text
     *---------------------------------------------------------------------------------------------*/
-    inline std::string generate_cpp(Function const& function, std::string const& name)
+    inline std::string detail::generate_header(Function const& function, std::string const& name,
+                                               std::string const& outputs, std::string const& footer)
     {
         if (!detail::is_identifier(name))
             throw std::invalid_argument("generate_cpp: '" + name + "' is not a usable C++ identifier");
@@ -369,11 +396,12 @@ namespace lode
         out += " *              Variables:  " + detail::name_list(function.domain().elements()) + "\n";
         if (parameters)
             out += " *              Parameters: " + detail::name_list(function.parameters()) + "\n";
-        out += " *              Outputs:    " + n_out + " (" + shape + ")\n";
+        std::string described = outputs.empty() ? n_out + " (" + shape + ")" : outputs;
+        out += " *              Outputs:    " + described + "\n";
         if (show_text) out += " *              Function:   " + text + "\n";
         out += rule_bottom + "\n";
         out += "#ifndef " + guard + "\n#define " + guard + "\n\n";
-        out += "#include <cmath>\n#include <cstddef>\n#include <limits>\n\n";
+        out += "#include <array>\n#include <cmath>\n#include <cstddef>\n#include <limits>\n\n";
 
         // One point
         std::string point_parameters = parameters
@@ -408,8 +436,74 @@ namespace lode
             : name + "(points + p * " + n_in + ", outputs + p * " + n_out + ");";
         out += detail::signature("inline void " + name + "_batch", batch_parameters) + "\n";
         out += "{\n    for (std::size_t p = 0; p < count; ++p)\n        " + call + "\n}\n\n";
+        out += footer;
         out += "#endif\n";
         return out;
+    }
+
+
+    // The C++ source of a header defining the function (see detail::generate_header)
+    inline std::string generate_cpp(Function const& function, std::string const& name)
+    {return detail::generate_header(function, name, "", "");}
+
+
+   /*-----------------------------------------------------------------------------------------------
+    * std::string generate_cpp(SparseMatrixFunction const& matrix, std::string const& name)
+    *
+    * The header for a sparse matrix function: its values() generated as for any function, so
+    * name(...) computes the nonzero entries in CSR order, followed by the sparsity pattern as
+    * constants, so that a program can set up its sparse matrix without LODE:
+    *
+    *     name_rows, name_columns           dimensions of the matrix
+    *     name_row_offsets                  std::array of rows + 1 positions, from 0
+    *     name_column_indices               std::array of each entry's column, from 0
+    *---------------------------------------------------------------------------------------------*/
+    inline std::string generate_cpp(SparseMatrixFunction const& matrix, std::string const& name)
+    {
+        // An array declaration, its values wrapped before column 100
+        auto array = [](std::string const& head, std::vector<std::size_t> const& values)
+        {
+            std::string text   = head + " = {";
+            std::size_t column = text.size();
+            for (std::size_t k = 0; k < values.size(); ++k)
+            {
+                std::string item = std::to_string(values[k]) + (k + 1 < values.size() ? "," : "");
+                if (column + 1 + item.size() > 97)
+                {
+                    text  += "\n    ";
+                    column = 4;
+                }
+                else if (k > 0)
+                {
+                    text  += " ";
+                    column += 1;
+                }
+                text   += item;
+                column += item.size();
+            }
+            return text + "};\n";
+        };
+
+        std::string const rows    = std::to_string(matrix.rows());
+        std::string const columns = std::to_string(matrix.columns());
+        std::string const entries = std::to_string(matrix.nonzero_count());
+        std::string footer;
+        footer += "// Sparsity pattern of " + name + ":\n";
+        footer += "// compressed sparse row (CSR) form, counted from 0. The entries of row i are\n";
+        footer += "// the outputs from position row_offsets[i] up to (not including)\n";
+        footer += "// row_offsets[i + 1], and column_indices gives each entry's column.\n";
+        footer += "inline constexpr std::size_t " + name + "_rows    = " + rows + ";\n";
+        footer += "inline constexpr std::size_t " + name + "_columns = " + columns + ";\n";
+        std::string const offsets = std::to_string(matrix.rows() + 1);
+        footer += array("inline constexpr std::array<std::size_t, " + offsets + "> " + name
+                        + "_row_offsets", matrix.row_offsets());
+        footer += array("inline constexpr std::array<std::size_t, " + entries + "> " + name
+                        + "_column_indices", matrix.column_indices());
+        footer += "\n";
+
+        std::string outputs = entries + " (the nonzero entries of a " + rows + "x" + columns
+                            + " sparse matrix, in CSR order)";
+        return detail::generate_header(matrix.values(), name, outputs, footer);
     }
 
 
@@ -422,11 +516,11 @@ namespace lode
     inline void write_cpp(Function const& function, std::string const& name,
                           std::filesystem::path const& path)
     {
-        std::string source = generate_cpp(function, name);
-        if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path());
-        std::ofstream file(path);
-        file << source;
-        if (!file) throw std::runtime_error("write_cpp: could not write " + path.string());
+        detail::write_text(generate_cpp(function, name), path);
     }
+
+    inline void write_cpp(SparseMatrixFunction const& matrix, std::string const& name,
+                          std::filesystem::path const& path)
+    {detail::write_text(generate_cpp(matrix, name), path);}
 }
 #endif

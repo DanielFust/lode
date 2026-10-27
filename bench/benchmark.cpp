@@ -134,6 +134,8 @@ int main()
         {"robertson_jacobian", [](double const* in, double* out) {robertson_jacobian(in, out);}},
         {"network_rhs", [](double const* in, double* out) {network_rhs(in, out);}},
         {"network_jacobian", [](double const* in, double* out) {network_jacobian(in, out);}},
+        {"network_sparse_jacobian",
+         [](double const* in, double* out) {network_sparse_jacobian(in, out);}},
         {"triangle_shape", [](double const* in, double* out) {triangle_shape(in, out);}},
         {"triangle_gradients", [](double const* in, double* out) {triangle_gradients(in, out);}}};
 

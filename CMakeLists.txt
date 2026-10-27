@@ -10,6 +10,20 @@ target_include_directories(lode INTERFACE
 )
 target_compile_features(lode INTERFACE cxx_std_20)
 
+# Optional interoperability with MATL (include/lode/matl.hpp), tested when enabled. An installed
+# MATL is used if found; otherwise MATL is fetched from GitHub.
+option(LODE_WITH_MATL "Build and test LODE's MATL interoperability" OFF)
+if (LODE_WITH_MATL)
+    find_package(matl 2 QUIET)
+    if (NOT matl_FOUND)
+        include(FetchContent)
+        FetchContent_Declare(matl
+            GIT_REPOSITORY https://github.com/DanielFust/MATL.git
+            GIT_TAG        v2.2.0)
+        FetchContent_MakeAvailable(matl)
+    endif()
+endif()
+
 # Tests build by default only when LODE is the top-level project.
 option(LODE_BUILD_TESTS "Build the LODE tests" ${PROJECT_IS_TOP_LEVEL})
 if (LODE_BUILD_TESTS)

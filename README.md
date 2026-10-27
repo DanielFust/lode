@@ -69,6 +69,20 @@ det.grad();                               // [[F22, -F21], [-F12, F11]], the cof
 det.hessian();                            // a tensor of rank 4
 ```
 
+Large systems usually have sparse Jacobians. `sparse_jacobian()` finds the nonzero entries once,
+symbolically, and computes only those, in compressed sparse row (CSR) form:
+
+```cpp
+lode::SparseMatrixFunction J = rhs.sparse_jacobian();
+J.row_offsets(); J.column_indices();      // the pattern, counted from 0 (storage offsets)
+J.evaluate(state, rate_constants, values);   // only the nonzero entries, in CSR order
+J.entry(2, 1);                            // an entry as an expression, counted from 1
+```
+
+With [MATL](https://github.com/DanielFust/MATL), `#include "lode/matl.hpp"` gives
+`lode::csr_matrix(J)`, a MATL sparse matrix with the same pattern, whose values `J.evaluate`
+writes in place (configure with `-DLODE_WITH_MATL=ON` to build its test).
+
 Indexing follows one convention throughout: `()` gives a mathematical entry, counting from 1
 (`A(1, 2)`), and `[]` gives an element of storage, counting from 0 (`A[k]`). Functions
 themselves are applied with `()`, not indexed; their outputs and values are tensors.
@@ -137,9 +151,10 @@ evaluation, and an application to stiff chemical kinetics. See
 3. `Function` with fast compiled evaluation (including batches of points), gradient,
    Jacobian, Hessian, and partial evaluation. *(Done.)*
 4. Examples of usage and core features, and a stiff chemical kinetics application. *(Done.)*
-5. C++ code generation *(done)*; `expand` and `collect`.
+5. C++ code generation. *(Done.)*
 6. A tensor container; functions with tensor-valued domains and outputs. *(Done.)*
-7. Sparse Jacobians, written into MATL's sparse matrices.
+7. Sparse Jacobians, with MATL interoperability. *(Done.)*
+8. Arbitrary-precision exact numbers; `expand` and `collect`.
 
 ## Building
 

@@ -101,6 +101,39 @@ int main()
         LODE_CHECK(matches);
     }
 
+    // Sparse Jacobians: the generated pattern is LODE's, and the generated values are the
+    // interpreter's
+    std::vector<lode::test::SparseCodegenCase> sparse = lode::test::sparse_codegen_cases();
+    lode::SparseMatrixFunction const& robertson = sparse[0].matrix;
+    LODE_CHECK_EQUAL(robertson_sparse_rows, robertson.rows());
+    LODE_CHECK_EQUAL(robertson_sparse_columns, robertson.columns());
+    LODE_CHECK(std::vector<std::size_t>(robertson_sparse_row_offsets.begin(),
+                                        robertson_sparse_row_offsets.end())
+               == robertson.row_offsets());
+    LODE_CHECK(std::vector<std::size_t>(robertson_sparse_column_indices.begin(),
+                                        robertson_sparse_column_indices.end())
+               == robertson.column_indices());
+    std::vector<double> state{0.9, 2e-5, 0.1};
+    std::vector<double> rates{0.04, 3e7, 1e4};
+    std::vector<double> expected_values(robertson.nonzero_count());
+    std::vector<double> generated_values(robertson.nonzero_count());
+    robertson.evaluate(state, rates, expected_values);
+    robertson_sparse(state.data(), rates.data(), generated_values.data());
+    LODE_CHECK(all_close(expected_values, generated_values));
+
+    lode::SparseMatrixFunction const& chain = sparse[1].matrix;
+    LODE_CHECK_EQUAL(chain_sparse_column_indices.size(), chain.nonzero_count());
+    LODE_CHECK(std::vector<std::size_t>(chain_sparse_column_indices.begin(),
+                                        chain_sparse_column_indices.end())
+               == chain.column_indices());
+    std::vector<double> amounts(chain.columns());
+    for (std::size_t i = 0; i < amounts.size(); ++i) amounts[i] = 1.0 + 0.01 * static_cast<double>(i);
+    std::vector<double> chain_expected(chain.nonzero_count());
+    std::vector<double> chain_generated(chain.nonzero_count());
+    chain.evaluate(amounts, chain_expected);
+    chain_sparse(amounts.data(), chain_generated.data());
+    LODE_CHECK(all_close(chain_expected, chain_generated));
+
     // The generated text
     lode::Symbol x("x");
     lode::Symbol y("y");

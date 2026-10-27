@@ -86,5 +86,47 @@ namespace lode::test
         }
         return cases;
     }
+
+
+    // A sparse matrix function and the name its generated code is given
+    struct SparseCodegenCase
+    {
+        std::string          name;
+        SparseMatrixFunction matrix;
+    };
+
+
+   /*-----------------------------------------------------------------------------------------------
+    * std::vector<SparseCodegenCase> sparse_codegen_cases()
+    *
+    * Sparse Jacobians whose generated code is tested: Robertson's kinetics with the rate
+    * constants as parameters, and a chain of 40 reactions A_i -> A_(i+1) at rates i*A_i.
+    *---------------------------------------------------------------------------------------------*/
+    inline std::vector<SparseCodegenCase> sparse_codegen_cases()
+    {
+        Symbol y1("y1");
+        Symbol y2("y2");
+        Symbol y3("y3");
+        Symbol k1("k1");
+        Symbol k2("k2");
+        Symbol k3("k3");
+        Function rhs({y1, y2, y3},
+                     {-k1*y1 + k3*y2*y3, k1*y1 - k3*y2*y3 - k2*pow(y2, 2), k2*pow(y2, 2)},
+                     {k1, k2, k3});
+
+        std::size_t const n = 40;
+        std::vector<Symbol> a;
+        for (std::size_t i = 0; i < n; ++i) a.emplace_back("a" + std::to_string(i));
+        std::vector<Expr> rates(n, Expr(0));
+        for (std::size_t i = 0; i + 1 < n; ++i)
+        {
+            Expr rate = static_cast<int>(i + 1)*pow(a[i], 2);
+            rates[i]     -= rate;
+            rates[i + 1] += rate;
+        }
+
+        return {{"robertson_sparse", rhs.sparse_jacobian()},
+                {"chain_sparse", Function(a, rates).sparse_jacobian()}};
+    }
 }
 #endif

@@ -15,6 +15,7 @@ the expected output written beside the code that produces it.
 | [08_batch_evaluation](08_batch_evaluation.cpp) | Evaluating many points in one call |
 | [09_chemical_kinetics](09_chemical_kinetics.cpp) | Application: integrating Robertson's stiff reactions with an exact Jacobian |
 | [10_tensors](10_tensors.cpp) | Tensors: indexing from 1 with `()` and from 0 with `[]`, functions of vectors and matrices |
+| [11_sparse_jacobians](11_sparse_jacobians.cpp) | Sparse Jacobians: the CSR pattern, computing only the nonzero entries |
 
 ## Building and running
 
