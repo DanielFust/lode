@@ -92,8 +92,9 @@ namespace lode::detail
         std::string                                                    domain_text_;
 
       public:
-        // A compiler for the given domain; throws std::invalid_argument if a variable repeats
-        explicit Compiler(std::vector<Symbol> const& domain);
+        // A compiler whose inputs are the domain's variables, then the parameters; throws
+        // std::invalid_argument if a variable appears twice among them
+        Compiler(std::vector<Symbol> const& domain, std::vector<Symbol> const& parameters);
 
         // Compiles the outputs; throws std::invalid_argument for a variable not in the domain
         std::shared_ptr<Program const> compile(std::vector<Expr> const& outputs);
@@ -126,20 +127,35 @@ namespace lode::detail
 
 
    /*-----------------------------------------------------------------------------------------------
-    * Compiler::Compiler(std::vector<Symbol> const& domain)
+    * Compiler::Compiler(std::vector<Symbol> const& domain, std::vector<Symbol> const& parameters)
     *
-    * Assigns input i to variable domain[i]; throws std::invalid_argument if a variable repeats.
+    * Assigns input i to the i-th variable of the domain followed by the parameters; throws
+    * std::invalid_argument if a variable appears twice among them.
     *---------------------------------------------------------------------------------------------*/
-    inline Compiler::Compiler(std::vector<Symbol> const& domain)
-        : input_count_(domain.size()), value_count_(static_cast<std::uint32_t>(domain.size()))
+    inline Compiler::Compiler(std::vector<Symbol> const& domain, std::vector<Symbol> const& parameters)
+        : input_count_(domain.size() + parameters.size()),
+          value_count_(static_cast<std::uint32_t>(domain.size() + parameters.size()))
     {
-        for (std::size_t i = 0; i < domain.size(); ++i)
+        std::vector<Symbol> inputs = domain;
+        inputs.insert(inputs.end(), parameters.begin(), parameters.end());
+
+        // How variables are described in error messages: "the domain (x, y) or the parameters (T)"
+        auto list = [](std::vector<Symbol> const& variables)
         {
-            this->domain_text_ += (i == 0 ? "" : ", ") + domain[i].name();
-            if (!this->inputs_.try_emplace(domain[i].id(), static_cast<std::uint32_t>(i)).second)
+            std::string text;
+            for (std::size_t i = 0; i < variables.size(); ++i)
+                text += (i == 0 ? "" : ", ") + variables[i].name();
+            return text;
+        };
+        this->domain_text_ = "the domain (" + list(domain) + ")";
+        if (!parameters.empty()) this->domain_text_ += " or the parameters (" + list(parameters) + ")";
+
+        for (std::size_t i = 0; i < inputs.size(); ++i)
+        {
+            if (!this->inputs_.try_emplace(inputs[i].id(), static_cast<std::uint32_t>(i)).second)
             {
-                throw std::invalid_argument("Function: '" + domain[i].name()
-                                            + "' appears twice in the domain");
+                throw std::invalid_argument("Function: '" + inputs[i].name()
+                                            + "' appears twice in the domain and parameters");
             }
         }
     }
@@ -328,8 +344,7 @@ namespace lode::detail
                 if (it == this->inputs_.end())
                 {
                     throw std::invalid_argument("Function: '" + expr.node().symbol().name
-                                                + "' is not in the domain ("
-                                                + this->domain_text_ + ")");
+                                                + "' is not in " + this->domain_text_);
                 }
                 return computed(it->second);
             }

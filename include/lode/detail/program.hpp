@@ -101,11 +101,20 @@ namespace lode::detail
 
         // Evaluates one point: input_count inputs, output_count outputs
         template<class T>
-        void run(T const* inputs, T* outputs) const;
+        void run(T const* inputs, T* outputs) const
+        {this->run(inputs, this->input_count_, static_cast<T const*>(nullptr), outputs);}
 
-        // Evaluates count points, stored point by point (inputs[p*input_count + i])
+        // Evaluates one point whose inputs come in two parts: the first `first_count` from
+        // `first`, the rest from `rest`
         template<class T>
-        void run_batch(T const* inputs, T* outputs, std::size_t count) const;
+        void run(T const* first, std::size_t first_count, T const* rest, T* outputs) const;
+
+        // Evaluates count points. Each point supplies its first `point_size` inputs (stored point
+        // by point: points[p*point_size + i]); the remaining inputs, the same for every point,
+        // come from `shared`.
+        template<class T>
+        void run_batch(T const* points, std::size_t point_size, T const* shared, T* outputs,
+                       std::size_t count) const;
 
         // The instructions as text, one per line, for inspection
         std::string listing() const;
@@ -118,42 +127,49 @@ namespace lode::detail
 
 
    /*-----------------------------------------------------------------------------------------------
-    * void Program::run(T const* inputs, T* outputs) const
+    * void Program::run(T const* first, std::size_t first_count, T const* rest, T* outputs) const
     *
     * Evaluates the program at one point.
     *
     * Template Parameters:
-    *     T          Number type
+    *     T              Number type
     *
     * Parameters:
-    *     inputs     input_count values
-    *     outputs    output_count values, written
+    *     first          The first first_count inputs
+    *     first_count    How many inputs come from first
+    *     rest           The other input_count - first_count inputs
+    *     outputs        output_count values, written
     *---------------------------------------------------------------------------------------------*/
     template<class T>
-    void Program::run(T const* inputs, T* outputs) const
+    void Program::run(T const* first, std::size_t first_count, T const* rest, T* outputs) const
     {
         thread_local std::vector<T> registers;
         if (registers.size() < this->register_count_) registers.resize(this->register_count_);
-        std::copy(inputs, inputs + this->input_count_, registers.begin());
+        std::copy(first, first + first_count, registers.begin());
+        std::copy(rest, rest + (this->input_count_ - first_count), registers.begin() + first_count);
         this->execute(registers.data(), std::integral_constant<std::size_t, 1>{}, outputs);
     }
 
 
    /*-----------------------------------------------------------------------------------------------
-    * void Program::run_batch(T const* inputs, T* outputs, std::size_t count) const
+    * void Program::run_batch(T const* points, std::size_t point_size, T const* shared,
+    *                         T* outputs, std::size_t count) const
     *
     * Evaluates the program at many points, BLOCK points at a time.
     *
     * Template Parameters:
-    *     T          Number type
+    *     T             Number type
     *
     * Parameters:
-    *     inputs     count*input_count values, point by point
-    *     outputs    count*output_count values, point by point, written
-    *     count      Number of points
+    *     points        count*point_size values, point by point
+    *     point_size    Inputs supplied by each point (the first point_size inputs)
+    *     shared        The other input_count - point_size inputs, the same for every point
+    *     outputs       count*output_count values, point by point, written
+    *     count         Number of points
     *---------------------------------------------------------------------------------------------*/
     template<class T>
-    void Program::run_batch(T const* inputs, T* outputs, std::size_t count) const
+    void Program::run_batch(T const* points, std::size_t point_size, T const* shared, T* outputs,
+                            std::size_t count) const
     {
         thread_local std::vector<T> registers;
         std::size_t const needed = this->register_count_ * BLOCK;
@@ -161,11 +177,15 @@ namespace lode::detail
 
         for (std::size_t first = 0; first < count; first += BLOCK)
         {
-            // Load the block's inputs, register by register: input i of point l at i*lanes + l
+            // Load the block's inputs, register by register: input i of point l at i*lanes + l.
+            // Shared inputs are copied to every point.
             std::size_t lanes = std::min(BLOCK, count - first);
             for (std::size_t l = 0; l < lanes; ++l)
-                for (std::size_t i = 0; i < this->input_count_; ++i)
-                    registers[i * lanes + l] = inputs[(first + l) * this->input_count_ + i];
+                for (std::size_t i = 0; i < point_size; ++i)
+                    registers[i * lanes + l] = points[(first + l) * point_size + i];
+            for (std::size_t i = point_size; i < this->input_count_; ++i)
+                for (std::size_t l = 0; l < lanes; ++l)
+                    registers[i * lanes + l] = shared[i - point_size];
 
             this->execute(registers.data(), lanes, outputs + first * this->output_count_);
         }

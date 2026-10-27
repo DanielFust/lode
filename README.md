@@ -56,6 +56,17 @@ lode::Function rhs({y1, y2, y3}, {-k1*y1 + k3*y2*y3,
 lode::Function jacobian = rhs.grad();     // 3x3, compiled together
 ```
 
+Parameters are inputs that derivatives leave alone, for values that change between
+evaluations without rebuilding the function:
+
+```cpp
+lode::Expr k = A*exp(-Ea/(R*T));                                 // Arrhenius rate
+lode::Function rhs({cA, cB}, {-k*cA*cB, -k*cA*cB}, {T, A, Ea});  // domain, outputs, parameters
+lode::Function jac = rhs.grad();             // 2x2: derivatives with respect to cA, cB only
+jac.evaluate(state, parameter_values, J);    // T, A, Ea given at each call
+lode::Function jac_T = jac.partial({{A, 1e7}, {Ea, 5e4}});   // fold the constants, keep T
+```
+
 ## Intended uses
 
 - Shape functions and their derivatives for finite elements.

@@ -14,7 +14,9 @@ entry per stretch of work. Commits are named by their short hash.
 | 3 | `Function`: compiled fast evaluation, batches, gradient/Jacobian/Hessian, partial evaluation | Done | `0e09903` |
 | 4 | Worked examples as tests: finite-element shape functions, stiff chemistry Jacobian | Planned | |
 | 5 | `expand`, `collect`, C++ code generation | Planned | |
+| 3b | Parameters: inputs excluded from derivatives | Done | *Add parameters to Function* |
 | — | Sparse Jacobians, written into MATL's `CSRMatrix` | Planned (you agreed) | |
+| — | A tensor container wrapping contiguous results, of any rank | Planned | |
 
 ## Requirements from you
 
@@ -27,6 +29,9 @@ entry per stretch of work. Commits are named by their short hash.
 - **R4. Style.** Your C++ style guide (C++20, `this->`, `east const`, title blocks, rules ending at
   column 100, `-Wall -Wextra -Werror` on GCC and Clang).
 - **R5. License.** BSD 3-Clause.
+- **R6. Indexing reflects the object.** Mathematical objects (matrices, tensors) are indexed
+  from 1, as in the mathematics; arrays in the computer-science sense from 0, as offsets from an
+  address. MATL follows this. How it applies to LODE is still to be discussed.
 
 ## Decisions
 
@@ -153,10 +158,27 @@ LODE, `f(x, y, z)` is partial evaluation and returns a new function, so assignin
 silently change a temporary. `Function::operator=` only works on a named function, which makes
 that line a compile error. Write `Function f(x, y, z); f = ...;` or `Function f({x, y, z}, expr)`.
 
-**D22. A variable outside the domain is an error.** Building a function whose outputs use a
-variable not in its domain throws, naming the variable and the domain. Values for such
-variables (rate constants, say) must be substituted first, or the variables added to the
-domain. This is open to revision; see Open questions.
+**D22. A variable outside the domain and parameters is an error.** Building a function whose
+outputs use a variable that is neither in its domain nor among its parameters throws, naming
+the variable and both lists. *(Revised by D23: originally the domain only.)*
+
+**D23. Parameters.** A function may have parameters besides its domain: inputs whose values
+are given at each evaluation and that derivatives leave alone. Both partial evaluation and
+parameters are substitution of a symbol; they differ in *when*. Partial evaluation substitutes
+when the function is built (constants fold; fastest evaluation; a rebuild per change of value,
+38 µs for the Robertson Jacobian, about 370 evaluations). Parameters substitute at each
+evaluation (no rebuild). One rule keeps them simple: a function's inputs are its domain's
+variables followed by its parameters; calls and `evaluate` take all inputs in that order (or
+the parameters separately, `evaluate(point, parameters, out)`), `grad` differentiates with
+respect to the domain only, and `diff(parameter)` still gives a sensitivity. Partial evaluation
+applies to parameters too, so values that never change can be folded while others stay
+parameters. In a batch, all points can share one set of parameter values.
+
+**D24. Results go into `std::span` buffers now; a tensor container comes later.** You chose
+compatibility first: spans let LODE write into a `std::vector`, `std::array`, MATL storage, or
+another library's arrays without copying. A tensor container that wraps contiguous results and
+indexes them with any rank, as nablaxx's `Tensor` was meant to, will follow. MATL adapters
+(dense `Matrix`, sparse `CSRMatrix`) remain possible on top.
 
 ## Log
 
@@ -286,6 +308,27 @@ domain. This is open to revision; see Open questions.
   arrays, so a span-based core can write into MATL storage without copying. Proposed: keep the
   span-based core and add an optional MATL adapter header; awaiting your decision.
 
+### 2026-10-26 — Decisions on the open questions; parameters
+
+- **Sparse Jacobians:** agreed, for later, possibly with MATL's sparse types (status table).
+- **Parameters:** you approved them as an addition (D23), though you may not use them much.
+  My finite-element example (element geometry as parameters) was off: shape functions are
+  differentiated with respect to the reference element's natural coordinates, and the geometry
+  enters through the Jacobian of the coordinate mapping. To be discussed in a later project.
+- **Results:** `std::span` now, a tensor container later (D24).
+- **Indexing:** you set out the principle recorded as R6. `Function::operator[]` (slicing a
+  function's outputs) is currently 0-based; whether a function's outputs count as a
+  mathematical object is a question for that discussion.
+- Implemented parameters: `lode::Parameters`, the new constructor argument, `parameters()`,
+  `evaluate(point, parameters, out)`, `evaluate_batch(points, parameters, out)` (parameters
+  copied to every point of a block), and partial evaluation and `partial` over parameters. Error
+  messages name both lists: `'T' is not in the domain (cA) or the parameters (A)`.
+- Tests (`tests/parameters_test.cpp`): the Arrhenius example; separate and combined parameter
+  values agree with each other and with substituting before building; changing temperature
+  without rebuilding; folding some parameters and keeping one; sensitivities; batches with
+  shared parameters; errors. All 11 test programs pass on Clang, GCC and the sanitizers;
+  benchmark timings are unchanged.
+
 ## Known limitations
 
 - The interpreter is 1.1–3.2× slower than hand-written C++ in batch mode, and 3–10× slower one
@@ -306,11 +349,8 @@ domain. This is open to revision; see Open questions.
 
 ## Open questions for you
 
-- **Container for tensor results.** Proposal: keep the `std::span` core and add an optional
-  `lode/matl.hpp` adapter that fills MATL `Matrix` and `CSRMatrix` objects (see the discussion
-  entry).
-- **Parameters.** Proposal: add parameters alongside substitution: symbols given values at each
-  evaluation, excluded from derivatives, and still foldable by partial evaluation (see the
-  discussion entry). Until decided, a variable outside the domain is an error (D22).
+- **Indexing in LODE (R6).** Which LODE objects are mathematical (1-based) and which are
+  arrays (0-based)? Candidates: `Function::operator[]` over outputs, and the future tensor
+  container.
 - **GitHub.** The repository is local only. Say when you want it pushed, and whether public or
   private.
