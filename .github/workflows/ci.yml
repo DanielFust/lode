@@ -1,0 +1,57 @@
+# Builds LODE and runs its tests and examples on every push to main and every pull request:
+# with GCC and Clang on Linux, Apple Clang on macOS, under the address and undefined-behaviour
+# sanitizers, and as a Release build that also runs the benchmark.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux, GCC 14
+            os: ubuntu-24.04
+            cxx: g++-14
+          - name: Linux, Clang 18
+            os: ubuntu-24.04
+            cxx: clang++-18
+          - name: macOS, Apple Clang
+            os: macos-latest
+            cxx: clang++
+          - name: Linux, Clang 18, sanitizers
+            os: ubuntu-24.04
+            cxx: clang++-18
+            flags: -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+          - name: Linux, GCC 14, Release and benchmark
+            os: ubuntu-24.04
+            cxx: g++-14
+            build_type: Release
+            benchmarks: "ON"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type || 'Debug' }}
+          -DCMAKE_CXX_FLAGS="${{ matrix.flags }}"
+          -DLODE_BUILD_BENCHMARKS=${{ matrix.benchmarks || 'OFF' }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Benchmark
+        if: matrix.benchmarks == 'ON'
+        run: ./build/lode_benchmark

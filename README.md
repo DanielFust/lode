@@ -1,5 +1,7 @@
 # LODE
 
+[![CI](https://github.com/DanielFust/lode/actions/workflows/ci.yml/badge.svg)](https://github.com/DanielFust/lode/actions/workflows/ci.yml)
+
 **Library for Operators, Derivatives and Expressions**
 
 LODE is a header-only C++20 library for building mathematical functions as symbolic

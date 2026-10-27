@@ -13,13 +13,14 @@ entry per stretch of work. Commits are named by their short hash.
 | 2 | Differentiation, substitution, `exp` `log` `sin` `cos`, reference evaluator | Done | `0838c4e` |
 | 3 | `Function`: compiled fast evaluation, batches, gradient/Jacobian/Hessian, partial evaluation | Done | `0e09903` |
 | 4 | Examples of usage and core features; chemical kinetics application | Done | `83b8218` |
-| 5a | C++ code generation | Done | *Add C++ code generation* |
+| 5a | C++ code generation | Done | `be59a87` |
 | 5b | `expand`, `collect` | Planned | |
-| — | Discussion: indexing (R6) | Next | |
+| — | Discussion: indexing (R6) | Done: convention settled (D27) | |
+| — | Published on GitHub, with continuous integration | Done (D28) | |
+| — | Discussion: tensor-valued domains and codomains of functions | Next | |
 | 3b | Parameters: inputs excluded from derivatives | Done | `743e2e2` |
 | — | Sparse Jacobians, written into MATL's `CSRMatrix` | After the indexing discussion | |
 | — | Discussion: the gradient of a vector of functions | After sparse Jacobians | |
-| — | Continuous integration on GitHub Actions | After 1 November (Actions minutes) | |
 | — | A tensor container wrapping contiguous results, of any rank | Planned | |
 
 ## Requirements from you
@@ -35,7 +36,7 @@ entry per stretch of work. Commits are named by their short hash.
 - **R5. License.** BSD 3-Clause.
 - **R6. Indexing reflects the object.** Mathematical objects (matrices, tensors) are indexed
   from 1, as in the mathematics; arrays in the computer-science sense from 0, as offsets from an
-  address. MATL follows this. How it applies to LODE is still to be discussed.
+  address. MATL follows this. For LODE: see D27.
 
 ## Decisions
 
@@ -200,6 +201,28 @@ LODE's own tests and benchmark use exactly this workflow.
 the single-assignment program, now with unused instructions removed (dead code elimination);
 `allocate_registers` turns it into an interpreter `Program`. Code generation uses the first step
 only.
+
+**D27. Indexing convention: `()` from 1 for mathematical objects, `[]` from 0 for arrays.**
+Parentheses take one or more indices counting from 1, as in the mathematics and in MATL;
+square brackets take one index counting from 0, an offset into storage, as in the C++ standard
+library. A future tensor container will follow both: `A(i, j)` for the mathematical entry,
+`A[k]` for the k-th element of its storage. For: the bracket shows at a glance which convention
+is in effect, which matters where both meet (a sparse matrix's entries and its storage arrays);
+standard C++ is moving the same way (C++23's `std::mdspan` indexes `m[i, j]` from 0);
+`operator()` takes several indices in C++20; index 0 with `()` is always an error, which catches
+a forgotten conversion; and MATL and LODE share one rule. Against: Eigen, Armadillo, Blaze and
+xtensor use `A(i, j)` from 0, so users of those libraries must be told; and code at the boundary
+between the two conventions converts with `i - 1`, though now visibly. In LODE, `()` on a
+`Function` already means evaluation, so a function cannot be indexed with it.
+`Function::operator[]` (a 0-based `[]` on a mathematical object) will be removed; how to reach a
+function's components is decided with the design question in Open questions.
+
+**D28. Public repository with continuous integration.** LODE is public at
+github.com/DanielFust/lode (public repositories run GitHub-hosted CI without using Actions
+minutes). `.github/workflows/ci.yml` builds and runs every test and example on each push to
+`main` and each pull request: GCC 14 and Clang 18 on Linux, Apple Clang on macOS, Clang with
+the address and undefined-behaviour sanitizers, and a GCC Release build that also runs the
+benchmark.
 
 ## Log
 
@@ -406,8 +429,18 @@ only.
   `std::pow` but can be slightly *less* accurate for large exponents, not more.
 - Queue agreed with you: the indexing discussion, then sparse Jacobians, then a discussion of
   what the gradient of a vector of functions should be (the question that originally led you to
-  write nablaxx's Tensor). CI waits for your Actions minutes to reset on 1 November, unless the
-  repository is public, in which case GitHub-hosted runners cost no minutes.
+  write nablaxx's Tensor). Continuous integration to follow once the repository is published.
+
+### 2026-10-27 — Indexing settled; published with CI
+
+- Indexing discussion: you proposed `()` from 1 and `[]` from 0, I gave the arguments for and
+  against, and we agreed (D27). You also confirmed that a tensor container's `[k]` gives a 0-based
+  flat offset into storage.
+- You raised the deeper question this leads to: should LODE's functions have tensor-valued
+  domains and codomains, or should a function always be scalar-valued, with a Jacobian being a
+  matrix of functions? Discussed in the conversation; the decision will be recorded here.
+- Published the repository and added CI (D28). The first CI run's result is recorded below
+  once it finishes.
 
 ## Known limitations
 
@@ -433,11 +466,8 @@ only.
 
 ## Open questions for you
 
-- **Indexing in LODE (R6).** Which LODE objects are mathematical (1-based) and which are
-  arrays (0-based)? Candidates: `Function::operator[]` over outputs, and the future tensor
-  container. Next on the queue.
-- **The gradient of a vector of functions.** Today `grad()` appends a dimension, so the
-  gradient of a vector function is its Jacobian matrix, and of a matrix function a rank-3
-  array. Should this be allowed, and what should it mean? To discuss after sparse Jacobians.
-- **GitHub.** The repository is local only. Pushing it, public or private, also decides how CI
-  is paid for: public repositories use GitHub-hosted runners without consuming Actions minutes.
+- **Tensor-valued domains and codomains.** Should a `Function` keep outputs of any shape (one
+  compiled object, as now), and also accept variables arranged as a vector or matrix? Or should
+  functions be scalar, with vectors and matrices of functions held in a tensor container (as in
+  nablaxx)? This also settles what replaces `Function::operator[]` (D27) and what the gradient
+  of a vector of functions means.
